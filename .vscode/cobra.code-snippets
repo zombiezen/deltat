@@ -1,0 +1,26 @@
+{
+  "command": {
+    "prefix": "command",
+    "scope": "go",
+    "body": [
+      "func new${1:Foo}Command(g *globalConfig) *cobra.Command {",
+      "\tc := &cobra.Command{",
+      "\t\tUse:           \"${1/(.*)/${1:/kebabcase}/}\",",
+      "\t\tShort:         \"${2}\",",
+      "\t\tArgs:          cobra.${3:NoArgs},",
+      "\t\tSilenceErrors: true,",
+      "\t\tSilenceUsage:  true,",
+      "\t}",
+      "\t// TODO(now): Add any flags.$4",
+      "\tc.RunE = func(cmd *cobra.Command, args []string) error {",
+      "\t\treturn run$1(cmd.Context(), g)",
+      "\t}",
+      "\treturn c",
+      "}",
+      "",
+      "func run$1(ctx context.Context, g *globalConfig) error {",
+      "\treturn nil$0",
+      "}",
+    ]
+  }
+}
