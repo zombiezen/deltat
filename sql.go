@@ -30,6 +30,8 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
+const timestampLayout = "2006-01-02T15:04:05"
+
 //go:embed sql/*/*.sql
 var rawSQLFiles embed.FS
 
@@ -79,6 +81,22 @@ func prepareConn(conn *sqlite.Conn) error {
 		AllowIndirect: true,
 		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
 			u, err := uuid.Parse(args[0].Text())
+			if err != nil {
+				return sqlite.Value{}, nil
+			}
+			return sqlite.BlobValue(u[:]), nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	// uuid7() -> BLOB
+	// Generate a new version 7 UUID.
+	err = conn.CreateFunction("uuid7", &sqlite.FunctionImpl{
+		NArgs:         0,
+		Deterministic: false,
+		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
+			u, err := uuid.NewV7()
 			if err != nil {
 				return sqlite.Value{}, nil
 			}

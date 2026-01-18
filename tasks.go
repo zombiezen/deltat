@@ -113,20 +113,22 @@ func newTaskNewCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	labels := c.Flags().StringSlice("label", nil, "comma-separated task `label`s")
+	opts := new(newTaskOptions)
+	c.Flags().StringSliceVar(&opts.labels, "label", nil, "comma-separated task `label`s")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskNew(cmd.Context(), g, strings.Join(args, " "), *labels)
+		opts.description = taskDescriptionFromArgs(args)
+		var err error
+		opts.labels, err = cleanLabels(opts.labels)
+		if err != nil {
+			return err
+		}
+
+		return runTaskNew(cmd.Context(), g, opts)
 	}
 	return c
 }
 
-func runTaskNew(ctx context.Context, g *globalConfig, description string, labels []string) (err error) {
-	description = strings.TrimSpace(description)
-	labels, err = cleanLabels(labels)
-	if err != nil {
-		return err
-	}
-
+func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err error) {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -138,28 +140,42 @@ func runTaskNew(ctx context.Context, g *globalConfig, description string, labels
 	}
 	defer endFn(&err)
 
-	id, err := uuid.NewV7()
-	if err != nil {
+	if _, err := newTask(db, opts); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+type newTaskOptions struct {
+	description string
+	labels      []string
+}
+
+func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {
+	id, err = uuid.NewV7()
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+
+	defer sqlitex.Save(db)(&err)
 	createdAt := time.Unix(id.Time().UnixTime()).UTC()
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/insert.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":uuid":        id.String(),
-			":description": description,
+			":description": opts.description,
 			":created_at":  createdAt.Format(time.RFC3339),
 		},
 	})
 	if err != nil {
-		return err
+		return uuid.UUID{}, err
 	}
-	if len(labels) > 0 {
-		if err := addTaskLabels(db, id, slices.Values(labels)); err != nil {
-			return err
+	if len(opts.labels) > 0 {
+		if err := addTaskLabels(db, id, slices.Values(opts.labels)); err != nil {
+			return uuid.UUID{}, err
 		}
 	}
-
-	return nil
+	return id, nil
 }
 
 func addTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (err error) {
@@ -185,4 +201,15 @@ func addTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (
 		}
 	}
 	return nil
+}
+
+func taskDescriptionFromArgs(args []string) string {
+	return strings.TrimSpace(strings.Join(args, " "))
+}
+
+func safeTaskDescription(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "(unnamed task)"
+	}
+	return s
 }

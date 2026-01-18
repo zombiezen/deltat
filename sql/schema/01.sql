@@ -40,7 +40,7 @@ create table "entries" (
     not null
     check ("start_time" regexp '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]'),
   "end_time" text
-    check ("end_time" regexp '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]')
+    check ("end_time" is null or "end_time" regexp '[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]')
 );
 
 create index "entries_by_task" on "entries" ("task_uuid", "start_time" desc, "uuid");
