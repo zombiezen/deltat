@@ -75,6 +75,7 @@ func main() {
 
 	rootCommand.AddCommand(
 		newLabelsCommand(g),
+		newTasksCommand(g),
 		newShellCommand(g),
 	)
 

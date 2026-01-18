@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 
@@ -90,16 +91,9 @@ func newLabelAddCommand(g *globalConfig) *cobra.Command {
 }
 
 func runLabelAdd(ctx context.Context, g *globalConfig, labels []string) (err error) {
-	labels = slices.Clone(labels)
-	for i, label := range labels {
-		label = strings.TrimSpace(label)
-		if label == "" {
-			return fmt.Errorf("empty label")
-		}
-		if strings.Contains(label, ",") {
-			return fmt.Errorf("label %s: cannot contain commas", label)
-		}
-		labels[i] = label
+	labels, err = cleanLabels(labels)
+	if err != nil {
+		return err
 	}
 
 	db, err := g.open(ctx)
@@ -113,20 +107,51 @@ func runLabelAdd(ctx context.Context, g *globalConfig, labels []string) (err err
 	}
 	defer endFn(&err)
 
+	if err := upsertLabels(db, slices.Values(labels)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// cleanLabels validates the given set of labels.
+func cleanLabels(labels []string) ([]string, error) {
+	modified := false
+	for i, label := range labels {
+		newLabel := strings.TrimSpace(label)
+		if newLabel == "" {
+			return labels, fmt.Errorf("empty label")
+		}
+		if strings.Contains(newLabel, ",") {
+			return labels, fmt.Errorf("label %s: cannot contain commas", newLabel)
+		}
+		if newLabel != label {
+			if !modified {
+				labels = slices.Clone(labels)
+				modified = true
+			}
+			labels[i] = label
+		}
+	}
+	return labels, nil
+}
+
+func upsertLabels(db *sqlite.Conn, labels iter.Seq[string]) (err error) {
+	defer sqlitex.Save(db)(&err)
+
 	stmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "labels/upsert.sql")
 	if err != nil {
 		return err
 	}
 	defer stmt.Finalize()
-	for _, label := range labels {
+	for label := range labels {
 		stmt.SetText(":name", label)
 		if _, err := stmt.Step(); err != nil {
-			return err
+			return fmt.Errorf("insert label %q: %v", label, err)
 		}
 		if err := stmt.Reset(); err != nil {
-			return err
+			return fmt.Errorf("insert label %q: %v", label, err)
 		}
 	}
-
 	return nil
 }

@@ -3,6 +3,7 @@ module zombiezen.com/go/deltat
 go 1.25.5
 
 require (
+	github.com/go-json-experiment/json v0.0.0-20251027170946-4849db3c2f7e
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.40.0
