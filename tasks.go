@@ -69,7 +69,7 @@ func runTaskList(ctx context.Context, g *globalConfig) error {
 	defer closeConn(ctx, db)
 
 	w := csv.NewWriter(os.Stdout)
-	w.Write([]string{"UUID", "Description", "Labels"})
+	w.Write([]string{"ID", "Description", "Labels"})
 	var labelsBuf []byte
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
