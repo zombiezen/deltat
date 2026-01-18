@@ -497,7 +497,7 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 		return uuid.UUID{}, err
 	}
 
-	c := exec.CommandContext(ctx, "fzf", "--delimiter=\x1f", "--read0", "--with-nth=2..", "--accept-nth=1")
+	c := exec.CommandContext(ctx, "fzf", "--delimiter="+string(columnSeparator), "--read0", "--with-nth=2..", "--accept-nth=1")
 	c.Stdin = tasksInput
 	output, err := c.Output()
 	if err != nil {
