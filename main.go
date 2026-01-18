@@ -27,6 +27,7 @@ import (
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
+	"zombiezen.com/go/sqlite/shell"
 	"zombiezen.com/go/sqlite/sqlitemigration"
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/xcontext"
@@ -74,6 +75,7 @@ func main() {
 
 	rootCommand.AddCommand(
 		newLabelsCommand(g),
+		newShellCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), sigterm...)
@@ -96,6 +98,32 @@ func closeConn(ctx context.Context, conn *sqlite.Conn) {
 	if err := conn.Close(); err != nil {
 		log.Errorf(ctx, "Closing database connection: %v", err)
 	}
+}
+
+func newShellCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "shell",
+		Short:         "SQLite shell",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Hidden:        true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runShell(cmd.Context(), g)
+	}
+	return c
+}
+
+func runShell(ctx context.Context, g *globalConfig) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+
+	shell.Run(db)
+	return nil
 }
 
 var initLogOnce sync.Once
