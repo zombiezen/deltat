@@ -41,6 +41,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.AddCommand(
+		newTaskEditCommand(g),
 		newTaskListCommand(g),
 		newTaskNewCommand(g),
 	)
@@ -200,6 +201,99 @@ func addTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (
 			return fmt.Errorf("add label %q to task %v: %v", label, taskID, err)
 		}
 	}
+	return nil
+}
+
+func newTaskEditCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "edit [flags] ID",
+		Short:         "Change details about a task",
+		Args:          cobra.ExactArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	opts := new(editTaskOptions)
+	c.Flags().StringVar(&opts.description, "description", "", "new description for task")
+	c.Flags().StringSliceVar(&opts.labels, "label", nil, "comma-separated task `label`s")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.taskID = args[0]
+		opts.descriptionPresent = c.Flags().Changed("description")
+		opts.labelsPresent = c.Flags().Changed("label")
+		return runTaskEdit(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+type editTaskOptions struct {
+	taskID string
+
+	newTaskOptions
+	descriptionPresent bool
+	labelsPresent      bool
+}
+
+func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) error {
+	taskID, err := uuid.Parse(opts.taskID)
+	if err != nil {
+		return err
+	}
+	labels, err := cleanLabels(opts.labels)
+	if err != nil {
+		return err
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	exists := false
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/get.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":uuid": taskID.String()},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			exists = true
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("no task with ID %v", taskID)
+	}
+
+	if opts.descriptionPresent {
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/set_description.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid":        taskID.String(),
+				":description": opts.description,
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set description: %v", err)
+		}
+	}
+
+	if opts.labelsPresent {
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/clear_labels.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid": taskID.String(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set labels: %v", err)
+		}
+		if err := addTaskLabels(db, taskID, slices.Values(labels)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
