@@ -7,6 +7,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/sys v0.40.0
+	zombiezen.com/go/gregorian v0.1.0
 	zombiezen.com/go/log v1.1.0
 	zombiezen.com/go/sqlite v1.4.2
 	zombiezen.com/go/xcontext v1.1.0

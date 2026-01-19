@@ -18,17 +18,24 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/csv"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
+	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"zombiezen.com/go/gregorian"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/shell"
@@ -84,6 +91,7 @@ func main() {
 		newStartCommand(g),
 		newStopCommand(g),
 		newStatusCommand(g),
+		newTimesheetCommand(g),
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), sigterm...)
@@ -367,6 +375,254 @@ func newStopCommand(g *globalConfig) *cobra.Command {
 	return c
 }
 
+func newTimesheetCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "timesheet [flags] [START_DATE [END_DATE]]",
+		Short:         "Show a daily breakdown",
+		Args:          cobra.MaximumNArgs(2),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	opts := &timesheetOptions{globalConfig: g}
+	c.Flags().BoolVar(&opts.showTotals, "totals", true, "show total times (plain format only)")
+	c.Flags().StringVar(&opts.format, "format", "plain", "output `format` (plain, csv, or json)")
+	c.RegisterFlagCompletionFunc("format", cobra.FixedCompletions(
+		[]cobra.Completion{
+			"plain",
+			"csv",
+			"json",
+		},
+		cobra.ShellCompDirectiveDefault,
+	))
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if opts.format != "plain" && opts.format != "csv" && opts.format != "json" {
+			return fmt.Errorf("invalid format %q", opts.format)
+		}
+
+		switch len(args) {
+		case 0:
+			now := time.Now()
+			today := gregorian.NewDate(now.Year(), now.Month(), now.Day())
+			opts.startDate, opts.endDate = today, today
+		case 1:
+			var err error
+			opts.startDate, err = gregorian.ParseDate(args[0])
+			if err != nil {
+				return err
+			}
+			opts.endDate = opts.startDate
+		default:
+			var err error
+			opts.startDate, err = gregorian.ParseDate(args[0])
+			if err != nil {
+				return err
+			}
+			opts.endDate, err = gregorian.ParseDate(args[1])
+			if err != nil {
+				return err
+			}
+		}
+
+		return runTimesheet(cmd.Context(), opts)
+	}
+	return c
+}
+
+type timesheetOptions struct {
+	*globalConfig
+	startDate  gregorian.Date
+	endDate    gregorian.Date
+	format     string
+	showTotals bool
+}
+
+func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
+	type timesheetTotal struct {
+		description string
+		duration    time.Duration
+	}
+	now := time.Now().UTC()
+
+	db, err := opts.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+
+	minTime := time.Date(opts.startDate.Year(), opts.startDate.Month(), opts.startDate.Day(), 0, 0, 0, 0, time.Local)
+	maxTime := time.Date(opts.endDate.Year(), opts.endDate.Month(), opts.endDate.Day()+1, 0, 0, 0, 0, time.Local)
+
+	var w *csv.Writer
+	if opts.format == "csv" {
+		w = csv.NewWriter(os.Stdout)
+		w.Write([]string{"ID", "Start Time", "End Time", "Task ID", "Description"})
+	}
+	totals := make(map[uuid.UUID]timesheetTotal)
+	var lastDateHeader gregorian.Date
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":now":      now.UTC().Format(time.RFC3339),
+			":min_time": minTime.UTC().Format(time.RFC3339),
+			":max_time": maxTime.UTC().Format(time.RFC3339),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			entryID, err := uuid.Parse(stmt.GetText("uuid"))
+			if err != nil {
+				return fmt.Errorf("uuid: %v", err)
+			}
+			startTime, err := time.Parse(timestampLayout, stmt.GetText("start_time"))
+			if err != nil {
+				return fmt.Errorf("start_time: %v", err)
+			}
+			var endTime time.Time
+			if s := stmt.GetText("end_time"); s != "" {
+				var err error
+				endTime, err = time.Parse(timestampLayout, s)
+				if err != nil {
+					return fmt.Errorf("end_time: %v", err)
+				}
+			}
+			taskID, err := uuid.Parse(stmt.GetText("task.uuid"))
+			if err != nil {
+				return fmt.Errorf("task.uuid: %v", err)
+			}
+			taskDescription := stmt.GetText("task.description")
+
+			switch opts.format {
+			case "plain":
+				startDate := localDateFromTime(startTime)
+
+				var headerFormat string
+				switch {
+				case lastDateHeader.IsZero():
+					headerFormat = "# %v\n\n"
+				case !lastDateHeader.Equal(startDate):
+					headerFormat = "\n# %v\n\n"
+				}
+				if headerFormat != "" {
+					fmt.Printf(headerFormat, startDate)
+					lastDateHeader = startDate
+				}
+
+				switch {
+				case endTime.IsZero():
+					fmt.Printf(
+						"- %7s – present: %s\n",
+						startTime.Local().Format(time.Kitchen),
+						safeTaskDescription(taskDescription),
+					)
+				case !startDate.Equal(localDateFromTime(endTime)):
+					fmt.Printf(
+						"- %7s – %s: %s\n",
+						startTime.Local().Format(time.Kitchen),
+						endTime.Local().Format("2006-01-02T15:04"),
+						safeTaskDescription(taskDescription),
+					)
+				default:
+					fmt.Printf(
+						"- %7s – %7s: %s\n",
+						startTime.Local().Format(time.Kitchen),
+						endTime.Local().Format(time.Kitchen),
+						safeTaskDescription(taskDescription),
+					)
+				}
+
+				t := totals[taskID]
+				t.description = taskDescription
+				startTimeForDuration := startTime
+				if startTime.Before(minTime) {
+					startTimeForDuration = minTime
+				}
+				endTimeForDuration := endTime
+				if endTime.IsZero() {
+					endTimeForDuration = now
+				} else if endTime.After(maxTime) {
+					endTimeForDuration = maxTime
+				}
+				t.duration += endTimeForDuration.Sub(startTimeForDuration)
+				totals[taskID] = t
+			case "csv":
+				row := []string{
+					entryID.String(),
+					startTime.UTC().Format(time.RFC3339),
+					endTime.UTC().Format(time.RFC3339),
+					taskID.String(),
+					taskDescription,
+				}
+				if err := w.Write(row); err != nil {
+					return err
+				}
+			case "json":
+				var obj struct {
+					ID        uuid.UUID  `json:"id"`
+					StartTime time.Time  `json:"start_time,format:RFC3339"`
+					EndTime   *time.Time `json:"end_time,format:RFC3339"`
+					Task      struct {
+						ID          uuid.UUID `json:"id"`
+						Description string    `json:"description"`
+					} `json:"task"`
+				}
+				obj.ID = taskID
+				obj.StartTime = startTime.UTC()
+				if !endTime.IsZero() {
+					obj.EndTime = new(time.Time)
+					*obj.EndTime = endTime.UTC()
+				}
+				obj.Task.ID = taskID
+				obj.Task.Description = taskDescription
+
+				line, err := jsonv2.Marshal(obj, jsonv2.WithMarshalers(jsonv2.MarshalToFunc(marshalUUIDTo)))
+				if err != nil {
+					return fmt.Errorf("entry %v: %v", entryID, err)
+				}
+				line = append(line, '\n')
+				if _, err := os.Stdout.Write(line); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("unhandled format %s", opts.format)
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if w != nil {
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return err
+		}
+	}
+
+	if opts.format == "plain" && opts.showTotals && len(totals) > 0 {
+		totalList := slices.AppendSeq(make([]timesheetTotal, 0, len(totals)), maps.Values(totals))
+		slices.SortFunc(totalList, func(a, b timesheetTotal) int {
+			return -cmp.Compare(a.duration, b.duration)
+		})
+		fmt.Print("\n# Totals\n\n")
+		const (
+			taskColumnWidth = 56
+			timeColumnWidth = 7
+		)
+		fmt.Printf("| %-*s | %-*s |\n", taskColumnWidth, "Task", timeColumnWidth, "Time")
+		fmt.Printf(
+			"| :%s | %s: |\n",
+			strings.Repeat("-", taskColumnWidth-1),
+			strings.Repeat("-", timeColumnWidth-1),
+		)
+		for _, t := range totalList {
+			fmt.Printf(
+				"| %-*s | %-*s |\n",
+				taskColumnWidth, safeTaskDescription(t.description),
+				timeColumnWidth, formatDuration(t.duration),
+			)
+		}
+	}
+
+	return nil
+}
+
 func newStatusCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "status",
@@ -460,6 +716,18 @@ func formatDuration(d time.Duration) string {
 	minutes := (totalSeconds / 60) % 60
 	hours := totalSeconds / (60 * 60)
 	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
+}
+
+func localDateFromTime(t time.Time) gregorian.Date {
+	if t.IsZero() {
+		return gregorian.Date{}
+	}
+	t = t.Local()
+	return gregorian.NewDate(t.Year(), t.Month(), t.Day())
+}
+
+func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
+	return enc.WriteToken(jsontext.String(u.String()))
 }
 
 var initLogOnce sync.Once
