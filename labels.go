@@ -28,15 +28,15 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func newLabelsCommand(g *globalConfig) *cobra.Command {
+func newLabelCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "labels",
+		Use:           "label",
 		Short:         "Manage labels",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
 	c.AddCommand(
-		newLabelAddCommand(g),
+		newLabelNewCommand(g),
 		newLabelListCommand(g),
 	)
 	return c
@@ -76,21 +76,21 @@ func runLabelList(ctx context.Context, g *globalConfig) error {
 	return nil
 }
 
-func newLabelAddCommand(g *globalConfig) *cobra.Command {
+func newLabelNewCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "add [flags] LABEL [...]",
+		Use:           "new [flags] LABEL [...]",
 		Short:         "Add new labels",
 		Args:          cobra.MinimumNArgs(1),
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runLabelAdd(cmd.Context(), g, args)
+		return runLabelNew(cmd.Context(), g, args)
 	}
 	return c
 }
 
-func runLabelAdd(ctx context.Context, g *globalConfig, labels []string) (err error) {
+func runLabelNew(ctx context.Context, g *globalConfig, labels []string) (err error) {
 	labels, err = cleanLabels(labels)
 	if err != nil {
 		return err

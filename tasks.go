@@ -33,9 +33,9 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
-func newTasksCommand(g *globalConfig) *cobra.Command {
+func newTaskCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "tasks",
+		Use:           "task",
 		Short:         "Manage types of activities",
 		SilenceErrors: true,
 		SilenceUsage:  true,
