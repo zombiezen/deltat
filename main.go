@@ -375,6 +375,47 @@ func newStopCommand(g *globalConfig) *cobra.Command {
 	return c
 }
 
+func runStop(ctx context.Context, g *globalConfig) (err error) {
+	now := time.Now().UTC()
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	var tasksToStop []string
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":limit": nil},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			tasksToStop = append(tasksToStop, safeTaskDescription(stmt.GetText("description")))
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if len(tasksToStop) == 0 {
+		fmt.Println("No running tasks.")
+		return nil
+	}
+
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop_all.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":now": now.Format(time.RFC3339)},
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Println("Stopped", strings.Join(tasksToStop, ", "))
+
+	return nil
+}
+
 func newTimesheetCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "timesheet [flags] [START_DATE [END_DATE]]",
@@ -666,47 +707,6 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	if !hasAny {
 		fmt.Println("Nothing running.")
 	}
-	return nil
-}
-
-func runStop(ctx context.Context, g *globalConfig) (err error) {
-	now := time.Now().UTC()
-
-	db, err := g.open(ctx)
-	if err != nil {
-		return err
-	}
-	defer closeConn(ctx, db)
-	endFn, err := sqlitex.ImmediateTransaction(db)
-	if err != nil {
-		return err
-	}
-	defer endFn(&err)
-
-	var tasksToStop []string
-	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":limit": nil},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			tasksToStop = append(tasksToStop, safeTaskDescription(stmt.GetText("description")))
-			return nil
-		},
-	})
-	if err != nil {
-		return err
-	}
-	if len(tasksToStop) == 0 {
-		fmt.Println("No running tasks.")
-		return nil
-	}
-
-	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop_all.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":now": now.Format(time.RFC3339)},
-	})
-	if err != nil {
-		return err
-	}
-	fmt.Println("Stopped", strings.Join(tasksToStop, ", "))
-
 	return nil
 }
 
