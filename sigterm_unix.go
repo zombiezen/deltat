@@ -25,3 +25,7 @@ import (
 )
 
 var sigterm = []os.Signal{unix.SIGTERM, unix.SIGINT}
+
+func killProcess(p *os.Process) error {
+	return p.Signal(unix.SIGTERM)
+}

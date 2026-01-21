@@ -1,0 +1,4 @@
+env DELTAT_DB=$PWD/foo.sqlite
+deltat task new Testing tasks
+deltat task list
+stdout 'Testing tasks'

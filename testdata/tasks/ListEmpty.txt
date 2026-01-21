@@ -1,0 +1,6 @@
+env DELTAT_DB=$PWD/foo.sqlite
+deltat task list
+cmp stdout empty.csv
+
+-- empty.csv --
+ID,Description,Labels

@@ -1,0 +1,6 @@
+env DELTAT_DB=$PWD/foo.sqlite
+deltat label new foo
+deltat label rename foo bar
+deltat label list
+stdout ^bar$
+! stdout ^foo$

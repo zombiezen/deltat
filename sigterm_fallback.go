@@ -21,3 +21,7 @@ package main
 import "os"
 
 var sigterm = []os.Signal{os.Interrupt}
+
+func killProcess(p *os.Process) error {
+	return p.Kill()
+}

@@ -1,0 +1,7 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat status
+stdout 'Nothing running'
+
+deltat timesheet --format=plain
+! stdout .
