@@ -38,6 +38,7 @@ func newLabelCommand(g *globalConfig) *cobra.Command {
 	c.AddCommand(
 		newLabelNewCommand(g),
 		newLabelListCommand(g),
+		newLabelRenameCommand(g),
 	)
 	return c
 }
@@ -108,6 +109,65 @@ func runLabelNew(ctx context.Context, g *globalConfig, labels []string) (err err
 	defer endFn(&err)
 
 	if err := upsertLabels(db, slices.Values(labels)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func newLabelRenameCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "rename [flags] OLD NEW",
+		Short:         "Rename a label",
+		Args:          cobra.ExactArgs(2),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		var err error
+		args, err = cleanLabels(args)
+		if err != nil {
+			return err
+		}
+		return runLabelRename(cmd.Context(), g, args[0], args[1])
+	}
+	return c
+}
+
+func runLabelRename(ctx context.Context, g *globalConfig, oldName, newName string) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	stmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "labels/exists.sql")
+	if err != nil {
+		return err
+	}
+	defer stmt.Finalize()
+	stmt.SetText(":name", oldName)
+	if exists, err := sqlitex.ResultBool(stmt); err != nil {
+		return err
+	} else if !exists {
+		return fmt.Errorf("%s: no such label", oldName)
+	}
+
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "labels/rename.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":old_name": oldName,
+			":new_name": newName,
+		},
+	})
+	if err != nil {
+		if sqlite.ErrCode(err) == sqlite.ResultConstraintUnique {
+			return fmt.Errorf("%s: label already exists", newName)
+		}
 		return err
 	}
 
