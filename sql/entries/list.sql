@@ -9,7 +9,7 @@ from
   "entries"
   join "tasks" on "entries"."task_uuid" = "tasks"."uuid"
 where
-  "entries"."start_time" < strftime('%FT%T', :max_time) and
-  coalesce("entries"."end_time", :now) > strftime('%FT%T', :min_time)
+  (:max_time is null or "entries"."start_time" < strftime('%FT%T', :max_time)) and
+  (:min_time is null or coalesce("entries"."end_time", :now) > strftime('%FT%T', :min_time))
 order by
   "entries"."start_time" asc;

@@ -1,0 +1,10 @@
+env DELTAT_DB=$PWD/foo.sqlite
+env TZ=UTC0
+
+deltat start -d Smoke testing
+sleep 2s
+deltat stop
+
+deltat timesheet --all --format=plain
+stdout '^- .*: Smoke testing$'
+stdout '^\| Smoke testing\s*\| [0-9]+:[0-5][0-9]:[0-5][0-9] \|$' # Make sure the time in the totals isn't negative.

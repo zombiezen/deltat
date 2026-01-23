@@ -48,6 +48,7 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	opts := &timesheetOptions{globalConfig: g}
+	c.Flags().BoolVarP(&opts.all, "all", "a", false, "show all entries")
 	c.Flags().BoolVar(&opts.showTotals, "totals", true, "show total times (plain format only)")
 	c.Flags().StringVar(&opts.format, "format", "plain", "output `format` (plain, csv, or json)")
 	c.RegisterFlagCompletionFunc("format", cobra.FixedCompletions(
@@ -63,27 +64,33 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 			return fmt.Errorf("invalid format %q", opts.format)
 		}
 
-		switch len(args) {
-		case 0:
-			now := time.Now()
-			today := gregorian.NewDate(now.Year(), now.Month(), now.Day())
-			opts.startDate, opts.endDate = today, today
-		case 1:
-			var err error
-			opts.startDate, err = gregorian.ParseDate(args[0])
-			if err != nil {
-				return err
+		if opts.all {
+			if len(args) != 0 {
+				return fmt.Errorf("cannot pass dates with --all")
 			}
-			opts.endDate = opts.startDate
-		default:
-			var err error
-			opts.startDate, err = gregorian.ParseDate(args[0])
-			if err != nil {
-				return err
-			}
-			opts.endDate, err = gregorian.ParseDate(args[1])
-			if err != nil {
-				return err
+		} else {
+			switch len(args) {
+			case 0:
+				now := time.Now()
+				today := gregorian.NewDate(now.Year(), now.Month(), now.Day())
+				opts.startDate, opts.endDate = today, today
+			case 1:
+				var err error
+				opts.startDate, err = gregorian.ParseDate(args[0])
+				if err != nil {
+					return err
+				}
+				opts.endDate = opts.startDate
+			default:
+				var err error
+				opts.startDate, err = gregorian.ParseDate(args[0])
+				if err != nil {
+					return err
+				}
+				opts.endDate, err = gregorian.ParseDate(args[1])
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -94,8 +101,11 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 
 type timesheetOptions struct {
 	*globalConfig
-	startDate  gregorian.Date
-	endDate    gregorian.Date
+
+	all       bool
+	startDate gregorian.Date
+	endDate   gregorian.Date
+
 	format     string
 	showTotals bool
 }
@@ -123,12 +133,18 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	}
 	totals := make(map[uuid.UUID]timesheetTotal)
 	var lastDateHeader gregorian.Date
+	args := map[string]any{
+		":now": now.UTC().Format(time.RFC3339),
+	}
+	if opts.all {
+		args[":min_time"] = nil
+		args[":max_time"] = nil
+	} else {
+		args[":min_time"] = minTime.UTC().Format(time.RFC3339)
+		args[":max_time"] = maxTime.UTC().Format(time.RFC3339)
+	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{
-			":now":      now.UTC().Format(time.RFC3339),
-			":min_time": minTime.UTC().Format(time.RFC3339),
-			":max_time": maxTime.UTC().Format(time.RFC3339),
-		},
+		Named: args,
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			entryID, err := uuid.Parse(stmt.GetText("uuid"))
 			if err != nil {
@@ -194,13 +210,13 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				t := totals[taskID]
 				t.description = taskDescription
 				startTimeForDuration := startTime
-				if startTime.Before(minTime) {
+				if !opts.all && startTime.Before(minTime) {
 					startTimeForDuration = minTime
 				}
 				endTimeForDuration := endTime
 				if endTime.IsZero() {
 					endTimeForDuration = now
-				} else if endTime.After(maxTime) {
+				} else if !opts.all && endTime.After(maxTime) {
 					endTimeForDuration = maxTime
 				}
 				t.duration += endTimeForDuration.Sub(startTimeForDuration)
