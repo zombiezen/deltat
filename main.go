@@ -27,7 +27,6 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"zombiezen.com/go/gregorian"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/shell"
@@ -178,22 +177,6 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 		fmt.Println("Nothing running.")
 	}
 	return nil
-}
-
-func formatDuration(d time.Duration) string {
-	totalSeconds := int64(d / time.Second)
-	seconds := totalSeconds % 60
-	minutes := (totalSeconds / 60) % 60
-	hours := totalSeconds / (60 * 60)
-	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
-}
-
-func localDateFromTime(t time.Time) gregorian.Date {
-	if t.IsZero() {
-		return gregorian.Date{}
-	}
-	t = t.Local()
-	return gregorian.NewDate(t.Year(), t.Month(), t.Day())
 }
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
