@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"iter"
 	"os"
@@ -74,13 +75,9 @@ func runTaskList(ctx context.Context, g *globalConfig) error {
 	var labelsBuf []byte
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			labelsLen := stmt.GetLen("labels")
-			labelsBuf = slices.Grow(labelsBuf[:0], labelsLen)
-			labelsBuf = labelsBuf[:labelsLen]
-			stmt.GetBytes("labels", labelsBuf[:labelsLen])
-			var labels []string
-			if err := jsonv2.Unmarshal(labelsBuf, &labels); err != nil {
-				return fmt.Errorf("labels: %v", err)
+			labels, err := labelsFromDatabase(stmt, "labels", &labelsBuf)
+			if err != nil {
+				return err
 			}
 
 			row := []string{
@@ -253,19 +250,8 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	}
 	defer endFn(&err)
 
-	exists := false
-	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/get.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":uuid": taskID.String()},
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			exists = true
-			return nil
-		},
-	})
-	if err != nil {
+	if _, err := fetchTask(db, taskID); err != nil {
 		return err
-	}
-	if !exists {
-		return fmt.Errorf("no task with ID %v", taskID)
 	}
 
 	if opts.descriptionPresent {
@@ -297,13 +283,75 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	return nil
 }
 
+type task struct {
+	ID          uuid.UUID `json:"id"`
+	Description string    `json:"description"`
+	Labels      []string  `json:"labels"`
+}
+
+func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
+	var result *task
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/get.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{":uuid": taskID.String()},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			result = &task{
+				ID:          taskID,
+				Description: stmt.GetText("description"),
+			}
+			var labelsBuf []byte
+			var err error
+			result.Labels, err = labelsFromDatabase(stmt, "labels", &labelsBuf)
+			if err != nil {
+				return err
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, &taskNotFoundError{id: taskID}
+	}
+	return result, nil
+}
+
+// labelsFromDatabase unmarshals the JSON labels column from a task row.
+func labelsFromDatabase(stmt *sqlite.Stmt, columnName string, labelsBuf *[]byte) ([]string, error) {
+	i := stmt.ColumnIndex(columnName)
+	labelsLen := stmt.ColumnLen(i)
+	*labelsBuf = slices.Grow((*labelsBuf)[:0], labelsLen)
+	*labelsBuf = (*labelsBuf)[:labelsLen]
+	stmt.ColumnBytes(i, (*labelsBuf)[:labelsLen])
+	var labels []string
+	if err := jsonv2.Unmarshal(*labelsBuf, &labels); err != nil {
+		return nil, fmt.Errorf("labels: %v", err)
+	}
+	return labels, nil
+}
+
+type taskNotFoundError struct {
+	id uuid.UUID
+}
+
+func (e *taskNotFoundError) Error() string {
+	return fmt.Sprintf("no task with ID %v", e.id)
+}
+
+func isTaskNotFound(err error) bool {
+	return errors.As(err, new(*taskNotFoundError))
+}
+
 func taskDescriptionFromArgs(args []string) string {
 	return strings.TrimSpace(strings.Join(args, " "))
 }
 
-func safeTaskDescription(s string) string {
+func plainTaskDescription(s string, quoted bool) string {
 	if strings.TrimSpace(s) == "" {
 		return "(unnamed task)"
+	}
+	if quoted {
+		return "“" + s + "”"
 	}
 	return s
 }

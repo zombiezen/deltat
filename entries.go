@@ -143,6 +143,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		args[":min_time"] = minTime.UTC().Format(time.RFC3339)
 		args[":max_time"] = maxTime.UTC().Format(time.RFC3339)
 	}
+	var labelsBuf []byte
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list.sql", &sqlitex.ExecOptions{
 		Named: args,
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -167,6 +168,10 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				return fmt.Errorf("task.uuid: %v", err)
 			}
 			taskDescription := stmt.GetText("task.description")
+			taskLabels, err := labelsFromDatabase(stmt, "task.labels", &labelsBuf)
+			if err != nil {
+				return err
+			}
 
 			switch opts.format {
 			case "plain":
@@ -189,21 +194,21 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 					fmt.Printf(
 						"- %7s – present: %s\n",
 						startTime.Local().Format(time.Kitchen),
-						safeTaskDescription(taskDescription),
+						plainTaskDescription(taskDescription, false),
 					)
 				case !startDate.Equal(localDateFromTime(endTime)):
 					fmt.Printf(
 						"- %7s – %s: %s\n",
 						startTime.Local().Format(time.Kitchen),
 						endTime.Local().Format("2006-01-02T15:04"),
-						safeTaskDescription(taskDescription),
+						plainTaskDescription(taskDescription, false),
 					)
 				default:
 					fmt.Printf(
 						"- %7s – %7s: %s\n",
 						startTime.Local().Format(time.Kitchen),
 						endTime.Local().Format(time.Kitchen),
-						safeTaskDescription(taskDescription),
+						plainTaskDescription(taskDescription, false),
 					)
 				}
 
@@ -237,10 +242,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 					ID        uuid.UUID  `json:"id"`
 					StartTime time.Time  `json:"start_time,format:RFC3339"`
 					EndTime   *time.Time `json:"end_time,format:RFC3339"`
-					Task      struct {
-						ID          uuid.UUID `json:"id"`
-						Description string    `json:"description"`
-					} `json:"task"`
+					Task      task       `json:"task"`
 				}
 				obj.ID = taskID
 				obj.StartTime = startTime.UTC()
@@ -250,6 +252,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				}
 				obj.Task.ID = taskID
 				obj.Task.Description = taskDescription
+				obj.Task.Labels = taskLabels
 
 				line, err := jsonv2.Marshal(obj, jsonv2.WithMarshalers(jsonv2.MarshalToFunc(marshalUUIDTo)))
 				if err != nil {
@@ -294,7 +297,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		for _, t := range totalList {
 			fmt.Printf(
 				"| %-*s | %-*s |\n",
-				taskColumnWidth, safeTaskDescription(t.description),
+				taskColumnWidth, plainTaskDescription(t.description, false),
 				timeColumnWidth, formatDuration(t.duration),
 			)
 		}
@@ -354,6 +357,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	defer closeConn(ctx, db)
 
 	var taskID uuid.UUID
+	taskDescription := opts.newTaskOptions.description
 	switch {
 	case opts.continueInteractive:
 		var err error
@@ -393,7 +397,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			return err
 		}
 		if hasActive {
-			return fmt.Errorf("already tracking %s (use deltat stop)", safeTaskDescription(activeTask))
+			return fmt.Errorf("already tracking %s (use deltat stop)", plainTaskDescription(activeTask, true))
 		}
 
 		if taskID == (uuid.UUID{}) {
@@ -401,6 +405,12 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			if err != nil {
 				return err
 			}
+		} else {
+			task, err := fetchTask(db, taskID)
+			if err != nil {
+				return err
+			}
+			taskDescription = task.Description
 		}
 
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
@@ -424,7 +434,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		return err
 	}
 
-	fmt.Printf("Started at %s\n", startedAt.Local().Format(time.Kitchen))
+	fmt.Printf("“%s” started at %s\n", taskDescription, startedAt.Local().Format(time.Kitchen))
 	if opts.detach {
 		return nil
 	}
@@ -501,7 +511,7 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			id := stmt.GetText("uuid")
-			description := safeTaskDescription(stmt.GetText("description"))
+			description := plainTaskDescription(stmt.GetText("description"), false)
 			tasksInput.WriteString(id)
 			tasksInput.WriteByte(columnSeparator)
 			tasksInput.WriteString(r.Replace(description))
@@ -554,7 +564,7 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{":limit": nil},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			tasksToStop = append(tasksToStop, safeTaskDescription(stmt.GetText("description")))
+			tasksToStop = append(tasksToStop, plainTaskDescription(stmt.GetText("description"), true))
 			return nil
 		},
 	})

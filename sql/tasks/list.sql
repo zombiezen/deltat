@@ -5,7 +5,8 @@ select
     from
       "task_labels" as tl
       join "labels" as l on l."id" = tl."label_id"
-    where tl."task_uuid" = "tasks"."uuid") as "labels"
+    where tl."task_uuid" = "tasks"."uuid"
+    order by l."name") as "labels"
 from "tasks"
 order by coalesce(
   (select "entries"."start_time"

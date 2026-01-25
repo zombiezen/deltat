@@ -160,7 +160,7 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 		Named: map[string]any{":limit": nil},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			hasAny = true
-			description := safeTaskDescription(stmt.GetText("description"))
+			description := plainTaskDescription(stmt.GetText("description"), true)
 			startTime, err := time.Parse(timestampLayout, stmt.GetText("start_time"))
 			if err != nil {
 				return fmt.Errorf("start_time: %v", err)
