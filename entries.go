@@ -320,6 +320,7 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVarP(&opts.detach, "detach", "d", false, "start task without occupying terminal")
 	c.Flags().BoolVarP(&opts.continueInteractive, "continue", "c", false, "continue a previous task (using fzf to select)")
 	c.Flags().StringVar(&opts.continueID, "continue-task", "", "`ID` of a previous task to continue")
+	c.Flags().StringVarP(&opts.startTimeOverride, "time", "t", "", "`time` to use for the entry's start")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.newTaskOptions.description = taskDescriptionFromArgs(args)
 		var err error
@@ -335,13 +336,21 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 type startOptions struct {
 	*globalConfig
 	newTaskOptions      newTaskOptions
+	startTimeOverride   string
 	detach              bool
 	continueID          string
 	continueInteractive bool
 }
 
 func runStart(ctx context.Context, opts *startOptions) error {
-	startedAt := time.Now().UTC()
+	startedAt := time.Now()
+	if opts.startTimeOverride != "" {
+		var err error
+		startedAt, err = parseTime(startedAt, opts.startTimeOverride)
+		if err != nil {
+			return fmt.Errorf("start time: %v", err)
+		}
+	}
 
 	isContinue := opts.continueID != "" || opts.continueInteractive
 	hasTaskArguments := opts.newTaskOptions.description != "" ||
@@ -365,8 +374,10 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		if err != nil {
 			return err
 		}
-		// Don't count the time interactively selecting the task.
-		startedAt = time.Now().UTC()
+		if opts.startTimeOverride == "" {
+			// Don't count the time interactively selecting the task.
+			startedAt = time.Now().UTC()
+		}
 	case opts.continueID != "":
 		var err error
 		taskID, err = uuid.Parse(opts.continueID)
@@ -416,7 +427,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":task_uuid":  taskID.String(),
-				":started_at": startedAt.Format(time.RFC3339),
+				":started_at": startedAt.UTC().Format(time.RFC3339),
 			},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				var err error
