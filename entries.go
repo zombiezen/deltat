@@ -39,6 +39,17 @@ import (
 	"zombiezen.com/go/xcontext"
 )
 
+func newEntryCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "entry",
+		Short:         "Manage time entries",
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.AddCommand(newEntryNewCommand(g))
+	return c
+}
+
 func newTimesheetCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "timesheet [flags] [START_DATE [END_DATE]]",
@@ -353,9 +364,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	}
 
 	isContinue := opts.continueID != "" || opts.continueInteractive
-	hasTaskArguments := opts.newTaskOptions.description != "" ||
-		len(opts.newTaskOptions.labels) > 0
-	if isContinue && hasTaskArguments {
+	if isContinue && !opts.newTaskOptions.isEmpty() {
 		return fmt.Errorf("do not pass task options when continuing")
 	}
 
@@ -424,17 +433,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			taskDescription = task.Description
 		}
 
-		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
-			Named: map[string]any{
-				":task_uuid":  taskID.String(),
-				":started_at": startedAt.UTC().Format(time.RFC3339),
-			},
-			ResultFunc: func(stmt *sqlite.Stmt) error {
-				var err error
-				entryID, err = uuid.Parse(stmt.GetText("uuid"))
-				return err
-			},
-		})
+		entryID, err = newEntry(db, taskID, startedAt, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -509,6 +508,120 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			return nil
 		}
 	}
+}
+
+func newEntryNewCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "new",
+		Short:         "Create a new time entry",
+		Args:          cobra.ExactArgs(2),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	opts := &newEntryOptions{globalConfig: g}
+	c.Flags().StringVar(&opts.newTaskOptions.description, "description", "", "description of new task")
+	c.Flags().StringSliceVar(&opts.newTaskOptions.labels, "label", nil, "comma-separated `labels` for new task")
+	c.Flags().StringVar(&opts.taskID, "task", "", "`ID` of a previous task to continue")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.startTime = args[0]
+		opts.endTime = args[1]
+
+		var err error
+		opts.newTaskOptions.labels, err = cleanLabels(opts.newTaskOptions.labels)
+		if err != nil {
+			return err
+		}
+
+		if opts.taskID != "" && !opts.newTaskOptions.isEmpty() {
+			return fmt.Errorf("do not pass task options when using --task")
+		}
+
+		return runEntryNew(cmd.Context(), opts)
+	}
+	return c
+}
+
+type newEntryOptions struct {
+	*globalConfig
+
+	startTime string
+	endTime   string
+
+	taskID         string
+	newTaskOptions newTaskOptions
+}
+
+func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
+	now := time.Now()
+	startTime, err := parseTime(now, opts.startTime)
+	if err != nil {
+		return fmt.Errorf("start time: %v", err)
+	}
+	endTime, err := parseTime(now, opts.endTime)
+	if err != nil {
+		return fmt.Errorf("end time: %v", err)
+	}
+	if startTime.After(endTime) {
+		return fmt.Errorf("start time is after end time")
+	}
+
+	var taskID uuid.UUID
+	if opts.taskID != "" {
+		var err error
+		taskID, err = uuid.Parse(opts.taskID)
+		if err != nil {
+			return fmt.Errorf("task ID: %v", err)
+		}
+	}
+
+	db, err := opts.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	if taskID == (uuid.UUID{}) {
+		var err error
+		taskID, err = newTask(db, &opts.newTaskOptions)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := newEntry(db, taskID, startTime, endTime); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime time.Time) (uuid.UUID, error) {
+	args := map[string]any{
+		":task_uuid":  taskID.String(),
+		":started_at": startTime.UTC().Format(time.RFC3339),
+	}
+	if endTime.IsZero() {
+		args[":ended_at"] = nil
+	} else {
+		args[":ended_at"] = endTime.UTC().Format(time.RFC3339)
+	}
+	var entryID uuid.UUID
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
+		Named: args,
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			var err error
+			entryID, err = uuid.Parse(stmt.GetText("uuid"))
+			return err
+		},
+	})
+	if err != nil {
+		return uuid.UUID{}, fmt.Errorf("create entry: %v", err)
+	}
+	return entryID, nil
 }
 
 func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {

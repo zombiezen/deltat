@@ -37,7 +37,7 @@ import (
 func newTaskCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "task",
-		Short:         "Manage types of activities",
+		Short:         "Manage types of entries",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -106,7 +106,7 @@ func runTaskList(ctx context.Context, g *globalConfig) error {
 func newTaskNewCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "new",
-		Short:         "Add a new activity type",
+		Short:         "Add a new entry type",
 		Args:          cobra.MinimumNArgs(1),
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -148,6 +148,10 @@ func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err
 type newTaskOptions struct {
 	description string
 	labels      []string
+}
+
+func (opts *newTaskOptions) isEmpty() bool {
+	return opts.description == "" && len(opts.labels) == 0
 }
 
 func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {

@@ -76,12 +76,13 @@ func main() {
 	}
 
 	rootCommand.AddCommand(
+		newEntryCommand(g),
 		newLabelCommand(g),
-		newTaskCommand(g),
 		newShellCommand(g),
 		newStartCommand(g),
-		newStopCommand(g),
 		newStatusCommand(g),
+		newStopCommand(g),
+		newTaskCommand(g),
 		newTimesheetCommand(g),
 	)
 
