@@ -65,7 +65,10 @@ func newEntryCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
-	c.AddCommand(newEntryNewCommand(g))
+	c.AddCommand(
+		newEntryEditCommand(g),
+		newEntryNewCommand(g),
+	)
 	return c
 }
 
@@ -617,6 +620,146 @@ func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime time.Time) (
 		return uuid.UUID{}, fmt.Errorf("create entry: %v", err)
 	}
 	return entryID, nil
+}
+
+func newEntryEditCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "edit [flags] ID",
+		Short:         "Change details about an entry",
+		Args:          cobra.ExactArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	opts := new(editEntryOptions)
+	c.Flags().StringVar(&opts.startTime, "start-time", "", "start `time` of the entry")
+	c.Flags().StringVar(&opts.endTime, "end-time", "", "end `time` of the entry")
+	c.Flags().StringVar(&opts.taskID, "task", "", "`ID` of the task to associate with the entry")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		opts.entryID = args[0]
+		return runEntryEdit(cmd.Context(), g, opts)
+	}
+	return c
+}
+
+type editEntryOptions struct {
+	entryID string
+
+	startTime string
+	endTime   string
+	taskID    string
+}
+
+func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) error {
+	now := time.Now()
+
+	entryID, err := uuid.Parse(opts.entryID)
+	if err != nil {
+		return err
+	}
+	var startTime time.Time
+	if opts.startTime != "" {
+		var err error
+		startTime, err = parseTime(now, opts.startTime)
+		if err != nil {
+			return fmt.Errorf("start time: %v", err)
+		}
+	}
+	var endTime time.Time
+	if opts.endTime != "" {
+		var err error
+		endTime, err = parseTime(now, opts.endTime)
+		if err != nil {
+			return fmt.Errorf("end time: %v", err)
+		}
+	}
+	var taskID uuid.UUID
+	if opts.taskID != "" {
+		var err error
+		taskID, err = uuid.Parse(opts.taskID)
+		if err != nil {
+			return fmt.Errorf("task ID: %v", err)
+		}
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	if _, err := fetchEntry(db, entryID); err != nil {
+		return err
+	}
+
+	switch {
+	case opts.startTime != "" && opts.endTime == "":
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid": entryID.String(),
+				":time": startTime.UTC().Format(time.RFC3339),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set start time: %v", err)
+		}
+	case opts.startTime == "" && opts.endTime != "":
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_end_time.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid": entryID.String(),
+				":time": endTime.UTC().Format(time.RFC3339),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set end time: %v", err)
+		}
+	case opts.startTime != "" && opts.endTime != "":
+		setEndStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "entries/set_end_time.sql")
+		if err != nil {
+			return err
+		}
+		defer setEndStmt.Finalize()
+
+		// Clear the end time first so we don't violate the CHECK constraints.
+		setEndStmt.SetText(":uuid", entryID.String())
+		setEndStmt.SetNull(":time")
+		if _, err := setEndStmt.Step(); err != nil {
+			return fmt.Errorf("set end time: %v", err)
+		}
+
+		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid": entryID.String(),
+				":time": startTime.UTC().Format(time.RFC3339),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set start time: %v", err)
+		}
+
+		setEndStmt.SetText(":time", endTime.UTC().Format(time.RFC3339))
+		if _, err := setEndStmt.Step(); err != nil {
+			return fmt.Errorf("set end time: %v", err)
+		}
+	}
+
+	if opts.taskID != "" {
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_task.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid":      entryID.String(),
+				":task_uuid": taskID.String(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("set task: %v", err)
+		}
+	}
+
+	return nil
 }
 
 func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
