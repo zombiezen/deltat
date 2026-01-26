@@ -21,6 +21,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -38,6 +39,24 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 	"zombiezen.com/go/xcontext"
 )
+
+type entry struct {
+	ID         uuid.UUID  `json:"id"`
+	StartTime  time.Time  `json:"start_time,format:RFC3339"`
+	RawEndTime *time.Time `json:"end_time,format:RFC3339"`
+	Task       *task      `json:"task,omitzero"`
+}
+
+func (e *entry) EndTime() time.Time {
+	if e.RawEndTime == nil {
+		return time.Time{}
+	}
+	return *e.RawEndTime
+}
+
+func (e *entry) isActive() bool {
+	return e.EndTime().IsZero()
+}
 
 func newEntryCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
@@ -158,35 +177,30 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list.sql", &sqlitex.ExecOptions{
 		Named: args,
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			entryID, err := uuid.Parse(stmt.GetText("uuid"))
+			e := new(entry)
+			var err error
+			e.ID, err = uuid.Parse(stmt.GetText("uuid"))
 			if err != nil {
 				return fmt.Errorf("uuid: %v", err)
 			}
-			startTime, err := time.Parse(timestampLayout, stmt.GetText("start_time"))
-			if err != nil {
-				return fmt.Errorf("start_time: %v", err)
+			if err := fillEntryFromDatabase(e, stmt); err != nil {
+				return err
 			}
-			var endTime time.Time
-			if s := stmt.GetText("end_time"); s != "" {
-				var err error
-				endTime, err = time.Parse(timestampLayout, s)
-				if err != nil {
-					return fmt.Errorf("end_time: %v", err)
-				}
-			}
-			taskID, err := uuid.Parse(stmt.GetText("task.uuid"))
+
+			e.Task = new(task)
+			e.Task.ID, err = uuid.Parse(stmt.GetText("task.uuid"))
 			if err != nil {
 				return fmt.Errorf("task.uuid: %v", err)
 			}
-			taskDescription := stmt.GetText("task.description")
-			taskLabels, err := labelsFromDatabase(stmt, "task.labels", &labelsBuf)
+			e.Task.Description = stmt.GetText("task.description")
+			e.Task.Labels, err = labelsFromDatabase(stmt, "task.labels", &labelsBuf)
 			if err != nil {
 				return err
 			}
 
 			switch opts.format {
 			case "plain":
-				startDate := localDateFromTime(startTime)
+				startDate := localDateFromTime(e.StartTime)
 
 				var headerFormat string
 				switch {
@@ -201,73 +215,62 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				}
 
 				switch {
-				case endTime.IsZero():
+				case e.isActive():
 					fmt.Printf(
 						"- %7s – present: %s\n",
-						startTime.Local().Format(time.Kitchen),
-						plainTaskDescription(taskDescription, false),
+						e.StartTime.Local().Format(time.Kitchen),
+						plainTaskDescription(e.Task.Description, false),
 					)
-				case !startDate.Equal(localDateFromTime(endTime)):
+				case !startDate.Equal(localDateFromTime(e.EndTime())):
 					fmt.Printf(
 						"- %7s – %s: %s\n",
-						startTime.Local().Format(time.Kitchen),
-						endTime.Local().Format("2006-01-02T15:04"),
-						plainTaskDescription(taskDescription, false),
+						e.StartTime.Local().Format(time.Kitchen),
+						e.EndTime().Local().Format("2006-01-02T15:04"),
+						plainTaskDescription(e.Task.Description, false),
 					)
 				default:
 					fmt.Printf(
 						"- %7s – %7s: %s\n",
-						startTime.Local().Format(time.Kitchen),
-						endTime.Local().Format(time.Kitchen),
-						plainTaskDescription(taskDescription, false),
+						e.StartTime.Local().Format(time.Kitchen),
+						e.EndTime().Local().Format(time.Kitchen),
+						plainTaskDescription(e.Task.Description, false),
 					)
 				}
 
-				t := totals[taskID]
-				t.description = taskDescription
-				startTimeForDuration := startTime
-				if !opts.all && startTime.Before(minTime) {
+				t := totals[e.Task.ID]
+				t.description = e.Task.Description
+				startTimeForDuration := e.StartTime
+				if !opts.all && e.StartTime.Before(minTime) {
 					startTimeForDuration = minTime
 				}
-				endTimeForDuration := endTime
-				if endTime.IsZero() {
+				endTimeForDuration := e.EndTime()
+				if e.EndTime().IsZero() {
 					endTimeForDuration = now
-				} else if !opts.all && endTime.After(maxTime) {
+				} else if !opts.all && e.EndTime().After(maxTime) {
 					endTimeForDuration = maxTime
 				}
 				t.duration += endTimeForDuration.Sub(startTimeForDuration)
-				totals[taskID] = t
+				totals[e.Task.ID] = t
 			case "csv":
 				row := []string{
-					entryID.String(),
-					startTime.UTC().Format(time.RFC3339),
-					endTime.UTC().Format(time.RFC3339),
-					taskID.String(),
-					taskDescription,
+					e.ID.String(),
+					e.StartTime.UTC().Format(time.RFC3339),
+					e.EndTime().UTC().Format(time.RFC3339),
+					e.Task.ID.String(),
+					e.Task.Description,
 				}
 				if err := w.Write(row); err != nil {
 					return err
 				}
 			case "json":
-				var obj struct {
-					ID        uuid.UUID  `json:"id"`
-					StartTime time.Time  `json:"start_time,format:RFC3339"`
-					EndTime   *time.Time `json:"end_time,format:RFC3339"`
-					Task      task       `json:"task"`
+				e.StartTime = e.StartTime.UTC()
+				if e.RawEndTime != nil {
+					*e.RawEndTime = e.RawEndTime.UTC()
 				}
-				obj.ID = taskID
-				obj.StartTime = startTime.UTC()
-				if !endTime.IsZero() {
-					obj.EndTime = new(time.Time)
-					*obj.EndTime = endTime.UTC()
-				}
-				obj.Task.ID = taskID
-				obj.Task.Description = taskDescription
-				obj.Task.Labels = taskLabels
 
-				line, err := jsonv2.Marshal(obj, jsonv2.WithMarshalers(jsonv2.MarshalToFunc(marshalUUIDTo)))
+				line, err := jsonv2.Marshal(e, jsonv2.WithMarshalers(jsonv2.MarshalToFunc(marshalUUIDTo)))
 				if err != nil {
-					return fmt.Errorf("entry %v: %v", entryID, err)
+					return fmt.Errorf("entry %v: %v", e.ID, err)
 				}
 				line = append(line, '\n')
 				if _, err := os.Stdout.Write(line); err != nil {
@@ -454,23 +457,15 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	for {
 		select {
 		case now := <-ticker.C:
-			isEnded := true // If no rows found, then assume ended.
-			err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/get.sql", &sqlitex.ExecOptions{
-				Named: map[string]any{
-					":uuid": entryID.String(),
-				},
-				ResultFunc: func(stmt *sqlite.Stmt) error {
-					isEnded = stmt.ColumnType(stmt.ColumnIndex("end_time")) != sqlite.TypeNull
-					t, err := time.Parse(timestampLayout, stmt.GetText("start_time"))
-					if err != nil {
-						return fmt.Errorf("start_time: %v", err)
-					}
-					startedAt = t
-					return nil
-				},
-			})
-			if err != nil {
+			var isEnded bool
+			if e, err := fetchEntry(db, entryID); isEntryNotFound(err) {
+				// If no rows found, then assume ended.
+				isEnded = true
+			} else if err != nil {
 				log.Warnf(ctx, "Read entry: %v", err)
+			} else {
+				startedAt = e.StartTime
+				isEnded = !e.isActive()
 			}
 			if isEnded {
 				// Another process ended or removed the entry.
@@ -709,4 +704,52 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	fmt.Println("Stopped", strings.Join(tasksToStop, ", "))
 
 	return nil
+}
+
+func fetchEntry(db *sqlite.Conn, entryID uuid.UUID) (*entry, error) {
+	var result *entry
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/get.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":uuid": entryID.String(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			result = &entry{ID: entryID}
+			return fillEntryFromDatabase(result, stmt)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, &entryNotFoundError{id: entryID}
+	}
+	return result, nil
+}
+
+func fillEntryFromDatabase(e *entry, stmt *sqlite.Stmt) error {
+	var err error
+	e.StartTime, err = time.Parse(timestampLayout, stmt.GetText("start_time"))
+	if err != nil {
+		return fmt.Errorf("start_time: %v", err)
+	}
+	if i := stmt.ColumnIndex("end_time"); stmt.ColumnType(i) != sqlite.TypeNull {
+		t, err := time.Parse(timestampLayout, stmt.GetText("end_time"))
+		if err != nil {
+			return fmt.Errorf("end_time: %v", err)
+		}
+		e.RawEndTime = &t
+	}
+	return nil
+}
+
+type entryNotFoundError struct {
+	id uuid.UUID
+}
+
+func (e *entryNotFoundError) Error() string {
+	return fmt.Sprintf("no entry with ID %v", e.id)
+}
+
+func isEntryNotFound(err error) bool {
+	return errors.As(err, new(*entryNotFoundError))
 }
