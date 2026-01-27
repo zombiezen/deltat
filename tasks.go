@@ -17,12 +17,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"errors"
 	"fmt"
 	"iter"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -45,6 +47,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 		newTaskEditCommand(g),
 		newTaskListCommand(g),
 		newTaskNewCommand(g),
+		newTaskSelectCommand(g),
 	)
 	return c
 }
@@ -285,6 +288,68 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	}
 
 	return nil
+}
+
+func newTaskSelectCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "select",
+		Short:         "Run fzf on the tasks",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runTaskSelect(cmd.Context(), g)
+	}
+	return c
+}
+
+func runTaskSelect(ctx context.Context, g *globalConfig) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+
+	id, err := selectTask(ctx, db)
+	if err != nil {
+		return err
+	}
+	fmt.Println(id)
+
+	return nil
+}
+
+func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
+	const (
+		columnSeparator = byte(0x1f) // unit separator in ASCII
+		recordSeparator = byte(0)
+	)
+	r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
+
+	tasksInput := new(bytes.Buffer)
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			id := stmt.GetText("uuid")
+			description := plainTaskDescription(stmt.GetText("description"), false)
+			tasksInput.WriteString(id)
+			tasksInput.WriteByte(columnSeparator)
+			tasksInput.WriteString(r.Replace(description))
+			tasksInput.WriteByte(recordSeparator)
+			return nil
+		},
+	})
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+
+	c := exec.CommandContext(ctx, "fzf", "--delimiter="+string(columnSeparator), "--read0", "--with-nth={2}\t({1})", "--accept-nth=1")
+	c.Stdin = tasksInput
+	output, err := c.Output()
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	return uuid.ParseBytes(bytes.TrimSuffix(output, []byte("\n")))
 }
 
 type task struct {

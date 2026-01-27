@@ -17,7 +17,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/csv"
@@ -25,7 +24,6 @@ import (
 	"fmt"
 	"maps"
 	"os"
-	"os/exec"
 	"slices"
 	"strings"
 	"time"
@@ -760,38 +758,6 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	}
 
 	return nil
-}
-
-func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
-	const (
-		columnSeparator = byte(0x1f) // unit separator in ASCII
-		recordSeparator = byte(0)
-	)
-	r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
-
-	tasksInput := new(bytes.Buffer)
-	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			id := stmt.GetText("uuid")
-			description := plainTaskDescription(stmt.GetText("description"), false)
-			tasksInput.WriteString(id)
-			tasksInput.WriteByte(columnSeparator)
-			tasksInput.WriteString(r.Replace(description))
-			tasksInput.WriteByte(recordSeparator)
-			return nil
-		},
-	})
-	if err != nil {
-		return uuid.UUID{}, err
-	}
-
-	c := exec.CommandContext(ctx, "fzf", "--delimiter="+string(columnSeparator), "--read0", "--with-nth=2..", "--accept-nth=1")
-	c.Stdin = tasksInput
-	output, err := c.Output()
-	if err != nil {
-		return uuid.UUID{}, err
-	}
-	return uuid.ParseBytes(bytes.TrimSuffix(output, []byte("\n")))
 }
 
 func newStopCommand(g *globalConfig) *cobra.Command {
