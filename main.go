@@ -17,10 +17,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"iter"
 	"os"
+	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"time"
 
@@ -178,6 +182,40 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 		fmt.Println("Nothing running.")
 	}
 	return nil
+}
+
+func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) (string, error) {
+	const (
+		columnSeparator = byte(0x1f) // unit separator in ASCII
+		recordSeparator = byte(0)
+	)
+	r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
+
+	menu := new(bytes.Buffer)
+	for id, data := range items {
+		if strings.ContainsAny(id, string(columnSeparator)+string(recordSeparator)) {
+			return "", fmt.Errorf("fzf: invalid id %q", id)
+		}
+		menu.WriteString(r.Replace(id))
+		menu.WriteByte(columnSeparator)
+		menu.WriteString(r.Replace(data))
+		menu.WriteByte(recordSeparator)
+	}
+
+	c := exec.CommandContext(ctx,
+		"fzf",
+		"--delimiter="+string(columnSeparator),
+		"--read0",
+		"--accept-nth=1",
+		"--with-nth="+template,
+	)
+	c.Stdin = menu
+	output, err := c.Output()
+	output = bytes.TrimSuffix(output, []byte("\n"))
+	if err != nil {
+		err = fmt.Errorf("fzf: %v", err)
+	}
+	return string(output), err
 }
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
