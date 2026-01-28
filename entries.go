@@ -66,6 +66,7 @@ func newEntryCommand(g *globalConfig) *cobra.Command {
 	c.AddCommand(
 		newEntryEditCommand(g),
 		newEntryNewCommand(g),
+		newEntrySelectCommand(g),
 	)
 	return c
 }
@@ -758,6 +759,106 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	}
 
 	return nil
+}
+
+func newEntrySelectCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "select",
+		Short:         "Run fzf on the entries",
+		Args:          cobra.NoArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runEntrySelect(cmd.Context(), g)
+	}
+	return c
+}
+
+func runEntrySelect(ctx context.Context, g *globalConfig) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+
+	id, err := selectEntry(ctx, db)
+	if err != nil {
+		return err
+	}
+	fmt.Println(id)
+
+	return nil
+}
+
+func selectEntry(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
+	var queryError error
+	output, err := fzf(ctx, "{2}", func(yield func(string, string) bool) {
+		var labelsBuf []byte
+		queryError = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_recent.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":limit": -1,
+			},
+			ResultFunc: func(stmt *sqlite.Stmt) error {
+				e := new(entry)
+				var err error
+				e.ID, err = uuid.Parse(stmt.GetText("uuid"))
+				if err != nil {
+					return fmt.Errorf("uuid: %v", err)
+				}
+				if err := fillEntryFromDatabase(e, stmt); err != nil {
+					return err
+				}
+
+				e.Task = new(task)
+				e.Task.ID, err = uuid.Parse(stmt.GetText("task.uuid"))
+				if err != nil {
+					return fmt.Errorf("task.uuid: %v", err)
+				}
+				e.Task.Description = stmt.GetText("task.description")
+				e.Task.Labels, err = labelsFromDatabase(stmt, "task.labels", &labelsBuf)
+				if err != nil {
+					return err
+				}
+
+				var s string
+				startDate := localDateFromTime(e.StartTime)
+				switch {
+				case e.isActive():
+					s = fmt.Sprintf(
+						"%s\n%s – present\n",
+						plainTaskDescription(e.Task.Description, false),
+						e.StartTime.Local().Format("2006-01-02T15:04"),
+					)
+				case !startDate.Equal(localDateFromTime(e.EndTime())):
+					s = fmt.Sprintf(
+						"%s\n%s – %s",
+						plainTaskDescription(e.Task.Description, false),
+						e.StartTime.Local().Format("2006-01-02T15:04"),
+						e.EndTime().Local().Format("2006-01-02T15:04"),
+					)
+				default:
+					s = fmt.Sprintf(
+						"%s\n%v %7s – %7s",
+						plainTaskDescription(e.Task.Description, false),
+						startDate,
+						e.StartTime.Local().Format(time.Kitchen),
+						e.EndTime().Local().Format(time.Kitchen),
+					)
+				}
+				yield(e.ID.String(), s)
+
+				return nil
+			},
+		})
+	})
+	if err != nil {
+		return uuid.UUID{}, err
+	}
+	if queryError != nil {
+		return uuid.UUID{}, err
+	}
+	return uuid.Parse(output)
 }
 
 func newStopCommand(g *globalConfig) *cobra.Command {
