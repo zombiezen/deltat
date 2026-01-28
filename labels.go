@@ -36,8 +36,9 @@ func newLabelCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.AddCommand(
-		newLabelNewCommand(g),
+		newLabelDeleteCommand(g),
 		newLabelListCommand(g),
+		newLabelNewCommand(g),
 		newLabelRenameCommand(g),
 	)
 	return c
@@ -169,6 +170,67 @@ func runLabelRename(ctx context.Context, g *globalConfig, oldName, newName strin
 			return fmt.Errorf("%s: label already exists", newName)
 		}
 		return err
+	}
+
+	return nil
+}
+
+func newLabelDeleteCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "delete",
+		Short:         "Delete one or more labels",
+		Args:          cobra.MinimumNArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		labels, err := cleanLabels(args)
+		if err != nil {
+			return err
+		}
+		return runLabelDelete(cmd.Context(), g, labels)
+	}
+	return c
+}
+
+func runLabelDelete(ctx context.Context, g *globalConfig, labels []string) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	existsStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "labels/exists.sql")
+	if err != nil {
+		return err
+	}
+	defer existsStmt.Finalize()
+	deleteStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "labels/delete.sql")
+	if err != nil {
+		return err
+	}
+	defer deleteStmt.Finalize()
+
+	for _, name := range labels {
+		existsStmt.SetText(":name", name)
+		if exists, err := sqlitex.ResultBool(existsStmt); err != nil {
+			return fmt.Errorf("%s: %v", name, err)
+		} else if !exists {
+			return fmt.Errorf("%s: no such label", name)
+		}
+
+		deleteStmt.SetText(":name", name)
+		if _, err := deleteStmt.Step(); err != nil {
+			return fmt.Errorf("%s: %v", name, err)
+		}
+		if err := deleteStmt.Reset(); err != nil {
+			return fmt.Errorf("%s: %v", name, err)
+		}
 	}
 
 	return nil
