@@ -189,18 +189,6 @@ func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) 
 		columnSeparator = byte(0x1f) // unit separator in ASCII
 		recordSeparator = byte(0)
 	)
-	r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
-
-	menu := new(bytes.Buffer)
-	for id, data := range items {
-		if strings.ContainsAny(id, string(columnSeparator)+string(recordSeparator)) {
-			return "", fmt.Errorf("fzf: invalid id %q", id)
-		}
-		menu.WriteString(r.Replace(id))
-		menu.WriteByte(columnSeparator)
-		menu.WriteString(r.Replace(data))
-		menu.WriteByte(recordSeparator)
-	}
 
 	c := exec.CommandContext(ctx,
 		"fzf",
@@ -208,13 +196,43 @@ func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) 
 		"--read0",
 		"--accept-nth=1",
 		"--with-nth="+template,
+		"--no-sort",
 	)
-	c.Stdin = menu
+	stdin, err := c.StdinPipe()
+	if err != nil {
+		return "", fmt.Errorf("fzf: %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer func() {
+			stdin.Close()
+			close(done)
+		}()
+
+		var buf []byte
+		r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
+		for id, data := range items {
+			if strings.ContainsAny(id, string(columnSeparator)+string(recordSeparator)) {
+				log.Warnf(ctx, "fzf: invalid id %q", id)
+				continue
+			}
+			buf = buf[:0]
+			buf = append(buf, id...)
+			buf = append(buf, columnSeparator)
+			buf = append(buf, r.Replace(data)...)
+			buf = append(buf, recordSeparator)
+			if _, err := stdin.Write(buf); err != nil {
+				return
+			}
+		}
+	}()
+
 	output, err := c.Output()
 	output = bytes.TrimSuffix(output, []byte("\n"))
 	if err != nil {
 		err = fmt.Errorf("fzf: %v", err)
 	}
+	<-done
 	return string(output), err
 }
 
