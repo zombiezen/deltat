@@ -34,6 +34,12 @@ import (
 	"zombiezen.com/go/sqlite/sqlitex"
 )
 
+type task struct {
+	ID          uuid.UUID `json:"id"`
+	Description string    `json:"description"`
+	Labels      []string  `json:"labels"`
+}
+
 func newTaskCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "task",
@@ -343,12 +349,6 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 		return uuid.UUID{}, err
 	}
 	return uuid.Parse(output)
-}
-
-type task struct {
-	ID          uuid.UUID `json:"id"`
-	Description string    `json:"description"`
-	Labels      []string  `json:"labels"`
 }
 
 func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
