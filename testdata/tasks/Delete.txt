@@ -1,0 +1,14 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat task new Testing
+
+# Get new task ID.
+deltat task list
+tail -n+2
+cut -d , -f 1
+read TASK_ID
+
+# Delete task.
+deltat task delete $TASK_ID
+deltat task list
+! stdout Testing

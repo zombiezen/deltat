@@ -48,6 +48,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.AddCommand(
+		newTaskDeleteCommand(g),
 		newTaskEditCommand(g),
 		newTaskListCommand(g),
 		newTaskNewCommand(g),
@@ -261,7 +262,7 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	}
 	defer endFn(&err)
 
-	if _, err := fetchTask(db, taskID); err != nil {
+	if err := verifyTaskExists(db, taskID); err != nil {
 		return err
 	}
 
@@ -351,6 +352,85 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 	return uuid.Parse(output)
 }
 
+func newTaskDeleteCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "delete",
+		Short:         "Delete one or more tasks",
+		Args:          cobra.MinimumNArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	force := c.Flags().BoolP("force", "f", false, "delete task even if it has entries")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runTaskDelete(cmd.Context(), g, args, *force)
+	}
+	return c
+}
+
+func runTaskDelete(ctx context.Context, g *globalConfig, taskIDStrings []string, force bool) error {
+	taskIDs := make(uuid.UUIDs, 0, len(taskIDStrings))
+	for _, s := range taskIDStrings {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return err
+		}
+		taskIDs = append(taskIDs, id)
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	deleteEntriesStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "entries/delete_by_task.sql")
+	if err != nil {
+		return err
+	}
+	defer deleteEntriesStmt.Finalize()
+	deleteTaskStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "tasks/delete.sql")
+	if err != nil {
+		return err
+	}
+	defer deleteTaskStmt.Finalize()
+
+	for _, id := range taskIDs {
+		if err := verifyTaskExists(db, id); err != nil {
+			return err
+		}
+		if !force {
+			if hasEntries, err := taskHasEntries(db, id); err != nil {
+				return err
+			} else if hasEntries {
+				return fmt.Errorf("task %v has entries", id)
+			}
+		}
+
+		deleteEntriesStmt.SetText(":uuid", id.String())
+		if _, err := deleteEntriesStmt.Step(); err != nil {
+			return fmt.Errorf("delete entries for task %v: %v", id, err)
+		}
+		if err := deleteEntriesStmt.Reset(); err != nil {
+			return fmt.Errorf("delete entries for task %v: %v", id, err)
+		}
+
+		deleteTaskStmt.SetText(":uuid", id.String())
+		if _, err := deleteTaskStmt.Step(); err != nil {
+			return fmt.Errorf("delete task %v: %v", id, err)
+		}
+		if err := deleteTaskStmt.Reset(); err != nil {
+			return fmt.Errorf("delete task %v: %v", id, err)
+		}
+	}
+
+	return nil
+}
+
 func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
 	var result *task
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/get.sql", &sqlitex.ExecOptions{
@@ -376,6 +456,38 @@ func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
 		return nil, &taskNotFoundError{id: taskID}
 	}
 	return result, nil
+}
+
+func verifyTaskExists(db *sqlite.Conn, taskID uuid.UUID) error {
+	stmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "tasks/exists.sql")
+	if err != nil {
+		return fmt.Errorf("check for task %v: %v", taskID, err)
+	}
+	defer stmt.Finalize()
+	stmt.SetText(":uuid", taskID.String())
+	exists, err := sqlitex.ResultBool(stmt)
+	if err != nil {
+		return fmt.Errorf("check for task %v: %v", taskID, err)
+	}
+	if !exists {
+		return &taskNotFoundError{id: taskID}
+	}
+	return nil
+}
+
+// taskHasEntries reports whether the task with the given ID has entries.
+func taskHasEntries(db *sqlite.Conn, taskID uuid.UUID) (bool, error) {
+	stmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "tasks/has_entries.sql")
+	if err != nil {
+		return false, fmt.Errorf("check for task %v entries: %v", taskID, err)
+	}
+	defer stmt.Finalize()
+	stmt.SetText(":uuid", taskID.String())
+	hasRows, err := sqlitex.ResultBool(stmt)
+	if err != nil {
+		err = fmt.Errorf("check for task %v entries: %v", taskID, err)
+	}
+	return hasRows, err
 }
 
 // labelsFromDatabase unmarshals the JSON labels column from a task row.
