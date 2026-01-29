@@ -354,7 +354,7 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 
 func newTaskDeleteCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "delete",
+		Use:           "delete [flags] ID [...]",
 		Short:         "Delete one or more tasks",
 		Args:          cobra.MinimumNArgs(1),
 		SilenceErrors: true,

@@ -177,7 +177,7 @@ func runLabelRename(ctx context.Context, g *globalConfig, oldName, newName strin
 
 func newLabelDeleteCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "delete",
+		Use:           "delete [flags] LABEL [...]",
 		Short:         "Delete one or more labels",
 		Args:          cobra.MinimumNArgs(1),
 		SilenceErrors: true,
