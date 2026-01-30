@@ -64,6 +64,7 @@ func newEntryCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.AddCommand(
+		newEntryDeleteCommand(g),
 		newEntryEditCommand(g),
 		newEntryNewCommand(g),
 		newEntrySelectCommand(g),
@@ -859,6 +860,60 @@ func selectEntry(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 		return uuid.UUID{}, err
 	}
 	return uuid.Parse(output)
+}
+
+func newEntryDeleteCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "delete [flags] ID [...]",
+		Short:         "Delete one or more entries",
+		Args:          cobra.MinimumNArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runEntryDelete(cmd.Context(), g, args)
+	}
+	return c
+}
+
+func runEntryDelete(ctx context.Context, g *globalConfig, idStrings []string) error {
+	ids := make(uuid.UUIDs, 0, len(idStrings))
+	for _, s := range idStrings {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	stmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "entries/delete.sql")
+	if err != nil {
+		return err
+	}
+	defer stmt.Finalize()
+
+	for _, id := range ids {
+		stmt.SetText(":uuid", id.String())
+		if _, err := stmt.Step(); err != nil {
+			return fmt.Errorf("delete entry %v: %v", id, err)
+		}
+		if err := stmt.Reset(); err != nil {
+			return fmt.Errorf("delete entry %v: %v", id, err)
+		}
+	}
+
+	return nil
 }
 
 func newStopCommand(g *globalConfig) *cobra.Command {
