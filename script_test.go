@@ -198,7 +198,7 @@ func tailCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 
 	lines := splitLines(input)
 	if startLine < 0 {
-		startLine = len(lines) - startLine
+		startLine = len(lines) + startLine + 1
 	}
 	startLine = max(startLine, 1)
 	if startLine-1 < len(lines) {
