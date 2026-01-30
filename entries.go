@@ -509,7 +509,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 
 func newEntryNewCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
-		Use:           "new",
+		Use:           "new [flags] START END",
 		Short:         "Create a new time entry",
 		Args:          cobra.ExactArgs(2),
 		SilenceErrors: true,
