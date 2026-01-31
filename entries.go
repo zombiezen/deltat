@@ -847,7 +847,9 @@ func selectEntry(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 						e.EndTime().Local().Format(time.Kitchen),
 					)
 				}
-				yield(e.ID.String(), s)
+				if !yield(e.ID.String(), s) {
+					return fmt.Errorf("iteration stopped")
+				}
 
 				return nil
 			},
