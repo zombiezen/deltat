@@ -384,11 +384,15 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	taskDescription := opts.newTaskOptions.description
 	switch {
 	case opts.continueInteractive:
-		var err error
-		taskID, err = selectTask(ctx, db)
+		taskIDs, err := selectTask(ctx, db, nil)
 		if err != nil {
 			return err
 		}
+		if len(taskIDs) == 0 {
+			return fmt.Errorf("fzf: no results")
+		}
+		taskID = taskIDs[0]
+
 		if opts.startTimeOverride == "" {
 			// Don't count the time interactively selecting the task.
 			startedAt = time.Now().UTC()
@@ -770,31 +774,39 @@ func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	multi := c.Flags().BoolP("multi", "m", false, "enable multi-select")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runEntrySelect(cmd.Context(), g)
+		return runEntrySelect(cmd.Context(), g, *multi)
 	}
 	return c
 }
 
-func runEntrySelect(ctx context.Context, g *globalConfig) error {
+func runEntrySelect(ctx context.Context, g *globalConfig, multi bool) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeConn(ctx, db)
 
-	id, err := selectEntry(ctx, db)
+	ids, err := selectEntry(ctx, db, &fzfOptions{
+		multi: multi,
+	})
 	if err != nil {
 		return err
 	}
-	fmt.Println(id)
+	for _, id := range ids {
+		fmt.Println(id)
+	}
 
 	return nil
 }
 
-func selectEntry(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
+func selectEntry(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
+	opts = opts.clone()
+	opts.template = ""
+
 	var queryError error
-	output, err := fzf(ctx, "{2}", func(yield func(string, string) bool) {
+	output, err := fzf(ctx, func(yield func(string, string) bool) {
 		var labelsBuf []byte
 		queryError = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_recent.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
@@ -854,14 +866,14 @@ func selectEntry(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 				return nil
 			},
 		})
-	})
+	}, opts)
 	if err != nil {
-		return uuid.UUID{}, err
+		return nil, err
 	}
 	if queryError != nil {
-		return uuid.UUID{}, err
+		return nil, err
 	}
-	return uuid.Parse(output)
+	return parseUUIDs(output)
 }
 
 func newEntryDeleteCommand(g *globalConfig) *cobra.Command {

@@ -303,29 +303,37 @@ func newTaskSelectCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	multi := c.Flags().BoolP("multi", "m", false, "enable multi-select")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskSelect(cmd.Context(), g)
+		return runTaskSelect(cmd.Context(), g, *multi)
 	}
 	return c
 }
 
-func runTaskSelect(ctx context.Context, g *globalConfig) error {
+func runTaskSelect(ctx context.Context, g *globalConfig, multi bool) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeConn(ctx, db)
 
-	id, err := selectTask(ctx, db)
+	ids, err := selectTask(ctx, db, &fzfOptions{
+		multi: multi,
+	})
 	if err != nil {
 		return err
 	}
-	fmt.Println(id)
+	for _, id := range ids {
+		fmt.Println(id)
+	}
 
 	return nil
 }
 
-func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
+func selectTask(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
+	opts = opts.clone()
+	opts.template = "{2}\t({1})"
+
 	var rows [][2]string
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -336,20 +344,20 @@ func selectTask(ctx context.Context, db *sqlite.Conn) (uuid.UUID, error) {
 		},
 	})
 	if err != nil {
-		return uuid.UUID{}, err
+		return nil, err
 	}
 
-	output, err := fzf(ctx, "{2}\t({1})", func(yield func(string, string) bool) {
+	output, err := fzf(ctx, func(yield func(string, string) bool) {
 		for _, row := range rows {
 			if !yield(row[0], row[1]) {
 				return
 			}
 		}
-	})
+	}, opts)
 	if err != nil {
-		return uuid.UUID{}, err
+		return nil, err
 	}
-	return uuid.Parse(output)
+	return parseUUIDs(output)
 }
 
 func newTaskDeleteCommand(g *globalConfig) *cobra.Command {

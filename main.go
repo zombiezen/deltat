@@ -19,6 +19,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"iter"
 	"os"
@@ -184,7 +185,27 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	return nil
 }
 
-func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) (string, error) {
+type fzfOptions struct {
+	template string
+	multi    bool
+}
+
+func (opts *fzfOptions) clone() *fzfOptions {
+	opts2 := new(fzfOptions)
+	if opts != nil {
+		*opts2 = *opts
+	}
+	return opts2
+}
+
+func (opts *fzfOptions) templateFlagValue() string {
+	if opts == nil || opts.template == "" {
+		return "{2}"
+	}
+	return opts.template
+}
+
+func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions) ([]string, error) {
 	const (
 		columnSeparator = byte(0x1f) // unit separator in ASCII
 		recordSeparator = byte(0)
@@ -195,13 +216,20 @@ func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) 
 		"--delimiter="+string(columnSeparator),
 		"--read0",
 		"--accept-nth=1",
-		"--with-nth="+template,
+		"--with-nth="+opts.templateFlagValue(),
 		"--no-sort",
 	)
+	if opts != nil && opts.multi {
+		c.Args = append(c.Args, "--multi")
+	} else {
+		c.Args = append(c.Args, "--no-multi")
+	}
+
 	stdin, err := c.StdinPipe()
 	if err != nil {
-		return "", fmt.Errorf("fzf: %v", err)
+		return nil, fmt.Errorf("fzf: %v", err)
 	}
+
 	done := make(chan struct{})
 	go func() {
 		defer func() {
@@ -228,16 +256,31 @@ func fzf(ctx context.Context, template string, items iter.Seq2[string, string]) 
 	}()
 
 	output, err := c.Output()
-	output = bytes.TrimSuffix(output, []byte("\n"))
 	if err != nil {
 		err = fmt.Errorf("fzf: %v", err)
 	}
 	<-done
-	return string(output), err
+
+	if len(output) == 0 {
+		return nil, err
+	}
+	output = bytes.TrimSuffix(output, []byte("\n"))
+	return strings.Split(string(output), "\n"), err
 }
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
 	return enc.WriteToken(jsontext.String(u.String()))
+}
+
+func parseUUIDs(slice []string) (uuid.UUIDs, error) {
+	result := make(uuid.UUIDs, len(slice))
+	var resultError error
+	for i, s := range slice {
+		var err error
+		result[i], err = uuid.Parse(s)
+		resultError = errors.Join(resultError, err)
+	}
+	return result, resultError
 }
 
 var initLogOnce sync.Once
