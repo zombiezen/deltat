@@ -67,37 +67,60 @@ func newTaskListCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	var format outputFormat
+	registerOutputFormatFlagVar(c, &format)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskList(cmd.Context(), g)
+		return runTaskList(cmd.Context(), g, format)
 	}
 	return c
 }
 
-func runTaskList(ctx context.Context, g *globalConfig) error {
+func runTaskList(ctx context.Context, g *globalConfig, format outputFormat) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeConn(ctx, db)
 
-	w := csv.NewWriter(os.Stdout)
-	w.Write([]string{"ID", "Description", "Labels"})
+	var w *csv.Writer
+	if format == csvOutputFormat {
+		w = csv.NewWriter(os.Stdout)
+		w.Write([]string{"ID", "Description", "Labels"})
+	}
+	var writeError error
 	err = listTasks(db, func(t *task) bool {
-		row := []string{
-			t.ID.String(),
-			t.Description,
-			strings.Join(t.Labels, ","),
+		switch format {
+		case plainOutputFormat:
+			_, writeError = fmt.Println(plainTaskDescription(t.Description, false))
+		case csvOutputFormat:
+			row := []string{
+				t.ID.String(),
+				t.Description,
+				strings.Join(t.Labels, ","),
+			}
+			writeError = w.Write(row)
+		case jsonOutputFormat:
+			line, err := jsonv2.Marshal(t, jsonv2.WithMarshalers(jsonv2.MarshalToFunc(marshalUUIDTo)))
+			if err != nil {
+				writeError = fmt.Errorf("task %v: %v", t.ID, err)
+				return false
+			}
+			line = append(line, '\n')
+			_, writeError = os.Stdout.Write(line)
+		default:
+			writeError = fmt.Errorf("unhandled format %s", format)
 		}
-		err := w.Write(row)
-		return err == nil
+		return writeError == nil
 	})
 	if err != nil {
 		return err
 	}
 
-	w.Flush()
-	if err := w.Error(); err != nil {
-		return err
+	if w != nil {
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return err
+		}
 	}
 
 	return nil

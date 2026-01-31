@@ -1,5 +1,5 @@
 env DELTAT_DB=$PWD/foo.sqlite
-deltat task list
+deltat task list --format=csv
 cmp stdout empty.csv
 
 -- empty.csv --

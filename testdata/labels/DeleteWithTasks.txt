@@ -1,7 +1,7 @@
 env DELTAT_DB=$PWD/foo.sqlite
 deltat label new foo
 deltat task new --label=foo Testing
-deltat task list  # Show the change during debugging.
+deltat task list --format=csv  # Show the change during debugging.
 deltat label delete foo
 
 deltat label list

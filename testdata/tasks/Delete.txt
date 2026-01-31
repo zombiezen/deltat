@@ -3,7 +3,7 @@ env DELTAT_DB=$PWD/foo.sqlite
 deltat task new Testing
 
 # Get new task ID.
-deltat task list
+deltat task list --format=csv
 tail -n+2
 cut -d , -f 1
 read TASK_ID
