@@ -26,12 +26,17 @@
         pkgs = import nixpkgs { inherit system; };
       in
       {
+        packages.default = pkgs.callPackage ./package.nix {};
+
         devShells.default = pkgs.mkShell {
           packages = [
             pkgs.delve
             pkgs.fzf
-            pkgs.go_1_25
             pkgs.gopls
+          ];
+
+          inputsFrom = [
+            self.packages.${system}.default
           ];
 
           hardeningDisable = [ "fortify" ];
