@@ -83,20 +83,8 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 	opts := &timesheetOptions{globalConfig: g}
 	c.Flags().BoolVarP(&opts.all, "all", "a", false, "show all entries")
 	c.Flags().BoolVar(&opts.showTotals, "totals", true, "show total times (plain format only)")
-	c.Flags().StringVar(&opts.format, "format", "plain", "output `format` (plain, csv, or json)")
-	c.RegisterFlagCompletionFunc("format", cobra.FixedCompletions(
-		[]cobra.Completion{
-			"plain",
-			"csv",
-			"json",
-		},
-		cobra.ShellCompDirectiveDefault,
-	))
+	registerOutputFormatFlagVar(c, &opts.format)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if opts.format != "plain" && opts.format != "csv" && opts.format != "json" {
-			return fmt.Errorf("invalid format %q", opts.format)
-		}
-
 		if opts.all {
 			if len(args) != 0 {
 				return fmt.Errorf("cannot pass dates with --all")
@@ -139,7 +127,7 @@ type timesheetOptions struct {
 	startDate gregorian.Date
 	endDate   gregorian.Date
 
-	format     string
+	format     outputFormat
 	showTotals bool
 }
 
@@ -160,7 +148,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	maxTime := time.Date(opts.endDate.Year(), opts.endDate.Month(), opts.endDate.Day()+1, 0, 0, 0, 0, time.Local)
 
 	var w *csv.Writer
-	if opts.format == "csv" {
+	if opts.format == csvOutputFormat {
 		w = csv.NewWriter(os.Stdout)
 		w.Write([]string{"ID", "Start Time", "End Time", "Task ID", "Description"})
 	}
@@ -202,7 +190,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 			}
 
 			switch opts.format {
-			case "plain":
+			case plainOutputFormat:
 				startDate := localDateFromTime(e.StartTime)
 
 				var headerFormat string
@@ -254,7 +242,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				}
 				t.duration += endTimeForDuration.Sub(startTimeForDuration)
 				totals[e.Task.ID] = t
-			case "csv":
+			case csvOutputFormat:
 				row := []string{
 					e.ID.String(),
 					e.StartTime.UTC().Format(time.RFC3339),
@@ -265,7 +253,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				if err := w.Write(row); err != nil {
 					return err
 				}
-			case "json":
+			case jsonOutputFormat:
 				e.StartTime = e.StartTime.UTC()
 				if e.RawEndTime != nil {
 					*e.RawEndTime = e.RawEndTime.UTC()
@@ -295,7 +283,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		}
 	}
 
-	if opts.format == "plain" && opts.showTotals && len(totals) > 0 {
+	if opts.format == plainOutputFormat && opts.showTotals && len(totals) > 0 {
 		totalList := slices.AppendSeq(make([]timesheetTotal, 0, len(totals)), maps.Values(totals))
 		slices.SortFunc(totalList, func(a, b timesheetTotal) int {
 			return -cmp.Compare(a.duration, b.duration)

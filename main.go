@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -307,6 +308,117 @@ func parseUUIDs(slice []string) (uuid.UUIDs, error) {
 		resultError = errors.Join(resultError, err)
 	}
 	return result, resultError
+}
+
+// outputFormat is an enumeration of output formats for the CLI.
+type outputFormat string
+
+// Known output formats.
+// Can be listed with [knownOutputFormats].
+const (
+	plainOutputFormat outputFormat = "plain"
+	csvOutputFormat   outputFormat = "csv"
+	jsonOutputFormat  outputFormat = "json"
+)
+
+// knownOutputFormats is an [iter.Seq] over all the known [outputFormat] values.
+func knownOutputFormats(yield func(outputFormat) bool) {
+	if !yield(plainOutputFormat) {
+		return
+	}
+	if !yield(csvOutputFormat) {
+		return
+	}
+	if !yield(jsonOutputFormat) {
+		return
+	}
+}
+
+func registerOutputFormatFlagVar(c *cobra.Command, p *outputFormat) {
+	options := joinSeq(func(yield func(string) bool) {
+		knownOutputFormats(func(f outputFormat) bool {
+			return yield(string(f))
+		})
+	}, ", ", "or")
+
+	*p = plainOutputFormat // set default
+	const name = "format"
+	c.Flags().Var(p, name, "output `format` ("+options+")")
+
+	completions := slices.Collect(func(yield func(cobra.Completion) bool) {
+		knownOutputFormats(func(f outputFormat) bool {
+			return yield(cobra.Completion(f))
+		})
+	})
+	c.RegisterFlagCompletionFunc(name, cobra.FixedCompletions(completions, cobra.ShellCompDirectiveDefault))
+}
+
+func (f outputFormat) isKnown() bool {
+	for known := range knownOutputFormats {
+		if f == known {
+			return true
+		}
+	}
+	return false
+}
+
+func (f outputFormat) String() string {
+	return string(f)
+}
+
+func (f *outputFormat) Set(s string) error {
+	newValue := outputFormat(s)
+	if !newValue.isKnown() {
+		return fmt.Errorf("unknown format %q", s)
+	}
+	*f = newValue
+	return nil
+}
+
+func (f outputFormat) Type() string {
+	return "string"
+}
+
+func joinSeq(words iter.Seq[string], sep, conjunction string) string {
+	sb := new(strings.Builder)
+	next, stop := iter.Pull(words)
+	defer stop()
+
+	prev, ok := next()
+	if !ok {
+		return ""
+	}
+
+	n := 1
+	for {
+		next, ok := next()
+		if !ok {
+			break
+		}
+		if n > 1 {
+			sb.WriteString(sep)
+		}
+		sb.WriteString(prev)
+		prev = next
+
+		if n < 3 {
+			n++
+		}
+	}
+	if n > 1 {
+		switch {
+		case conjunction == "" || n > 2:
+			sb.WriteString(sep)
+		case conjunction != "" && n == 2:
+			sb.WriteByte(' ')
+		}
+		sb.WriteString(conjunction)
+		if conjunction != "" {
+			sb.WriteByte(' ')
+		}
+	}
+	sb.WriteString(prev)
+	return sb.String()
 }
 
 var initLogOnce sync.Once
