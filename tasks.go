@@ -80,24 +80,14 @@ func runTaskList(ctx context.Context, g *globalConfig) error {
 
 	w := csv.NewWriter(os.Stdout)
 	w.Write([]string{"ID", "Description", "Labels"})
-	var labelsBuf []byte
-	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			labels, err := labelsFromDatabase(stmt, "labels", &labelsBuf)
-			if err != nil {
-				return err
-			}
-
-			row := []string{
-				stmt.GetText("uuid"),
-				stmt.GetText("description"),
-				strings.Join(labels, ","),
-			}
-			if err := w.Write(row); err != nil {
-				return err
-			}
-			return nil
-		},
+	err = listTasks(db, func(t *task) bool {
+		row := []string{
+			t.ID.String(),
+			t.Description,
+			strings.Join(t.Labels, ","),
+		}
+		err := w.Write(row)
+		return err == nil
 	})
 	if err != nil {
 		return err
@@ -335,13 +325,10 @@ func selectTask(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UU
 	opts.template = "{2}\t({1})"
 
 	var rows [][2]string
-	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			id := stmt.GetText("uuid")
-			description := plainTaskDescription(stmt.GetText("description"), false)
-			rows = append(rows, [2]string{id, description})
-			return nil
-		},
+	err := listTasks(db, func(t *task) bool {
+		description := plainTaskDescription(t.Description, false)
+		rows = append(rows, [2]string{t.ID.String(), description})
+		return true
 	})
 	if err != nil {
 		return nil, err
@@ -464,6 +451,37 @@ func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
 		return nil, &taskNotFoundError{id: taskID}
 	}
 	return result, nil
+}
+
+func listTasks(db *sqlite.Conn, yield func(*task) bool) error {
+	errStop := errors.New("stop")
+	var labelsBuf []byte
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list.sql", &sqlitex.ExecOptions{
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			t := &task{
+				Description: stmt.GetText("description"),
+			}
+			var err error
+			t.ID, err = uuid.Parse(stmt.GetText("uuid"))
+			if err != nil {
+				return err
+			}
+			t.Labels, err = labelsFromDatabase(stmt, "labels", &labelsBuf)
+			if err != nil {
+				return fmt.Errorf("%v: %v", t.ID, err)
+			}
+
+			if !yield(t) {
+				return errStop
+			}
+
+			return nil
+		},
+	})
+	if errors.Is(err, errStop) {
+		err = nil
+	}
+	return err
 }
 
 func verifyTaskExists(db *sqlite.Conn, taskID uuid.UUID) error {
