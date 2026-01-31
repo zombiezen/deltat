@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	jsonv2 "github.com/go-json-experiment/json"
+	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/sqlite"
@@ -39,7 +41,8 @@ type task struct {
 	Description string    `json:"description"`
 	Labels      []string  `json:"labels"`
 
-	EntryCount int `json:"-"`
+	EntryCount int      `json:"-"`
+	Entries    []*entry `json:"entries,omitzero"`
 }
 
 func newTaskCommand(g *globalConfig) *cobra.Command {
@@ -55,6 +58,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 		newTaskListCommand(g),
 		newTaskNewCommand(g),
 		newTaskSelectCommand(g),
+		newTaskShowCommand(g),
 	)
 	return c
 }
@@ -225,6 +229,159 @@ func addTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (
 			return fmt.Errorf("add label %q to task %v: %v", label, taskID, err)
 		}
 	}
+	return nil
+}
+
+func newTaskShowCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "show",
+		Short:         "Show information about a task",
+		Args:          cobra.ExactArgs(1),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	var format outputFormat
+	registerOutputFormatFlagVar(c, &format)
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runTaskShow(cmd.Context(), g, args[0], format)
+	}
+	return c
+}
+
+func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, format outputFormat) (err error) {
+	now := time.Now()
+	taskID, err := uuid.Parse(taskIDString)
+	if err != nil {
+		return err
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	rollback, err := readonlySavepoint(db)
+	if err != nil {
+		return err
+	}
+	defer rollback()
+
+	t, err := fetchTask(db, taskID)
+	if err != nil {
+		return err
+	}
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_by_task.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":task_uuid": taskID.String(),
+		},
+		ResultFunc: func(stmt *sqlite.Stmt) error {
+			e := &entry{Task: t}
+			var err error
+			e.ID, err = uuid.Parse(stmt.GetText("uuid"))
+			if err != nil {
+				return fmt.Errorf("uuid: %v", err)
+			}
+			if err := fillEntryFromDatabase(e, stmt); err != nil {
+				return err
+			}
+
+			t.Entries = append(t.Entries, e)
+			return nil
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	switch format {
+	case plainOutputFormat:
+		buf := new(bytes.Buffer)
+		fmt.Fprintf(buf, "# %s\n\nID: %s\n\n", t.Description, t.ID)
+
+		if len(t.Labels) > 0 {
+			buf.WriteString("Labels:\n\n")
+			for _, label := range t.Labels {
+				fmt.Fprintf(buf, "- %s\n", label)
+			}
+			buf.WriteString("\n")
+		}
+
+		if len(t.Entries) == 0 {
+			buf.WriteString("0 entries")
+		} else {
+			var total time.Duration
+			for _, e := range t.Entries {
+				endTime := e.EndTime()
+				if endTime.IsZero() {
+					endTime = now
+				}
+				total += max(endTime.Sub(e.StartTime), 0)
+			}
+			noun := "entries"
+			if len(t.Entries) == 1 {
+				noun = "entry"
+			}
+			fmt.Fprintf(buf, "%d %s, totaling %s\n\n", len(t.Entries), noun, formatDuration(total))
+
+			buf.WriteString("| Date       | Start   | End     |\n")
+			buf.WriteString("| :--------- | ------: | ------: |\n")
+			for _, e := range t.Entries {
+				startTime := e.StartTime.Local()
+				startDate := localDateFromTime(startTime)
+				endTime := e.EndTime().Local()
+				var endTimeString string
+				switch {
+				case endTime.IsZero():
+					endTimeString = "present"
+				case !localDateFromTime(endTime).Equal(startDate):
+					endTimeString = endTime.Format("2006-01-02T15:04")
+				default:
+					endTimeString = endTime.Format(time.Kitchen)
+				}
+
+				fmt.Fprintf(buf, "| %s | %7s | %7s |\n",
+					startDate,
+					startTime.Format(time.Kitchen),
+					endTimeString,
+				)
+			}
+
+			if _, err := buf.WriteTo(os.Stdout); err != nil {
+				return err
+			}
+		}
+
+	case csvOutputFormat:
+		w := csv.NewWriter(os.Stdout)
+		w.Write(entryCSVHeaderRow())
+		for _, e := range t.Entries {
+			e.Task = t
+			w.Write(entryToCSV(e))
+		}
+		w.Flush()
+		if err := w.Error(); err != nil {
+			return err
+		}
+	case jsonOutputFormat:
+		if len(t.Entries) == 0 {
+			// Make sure we always serialize this field.
+			t.Entries = make([]*entry, 0)
+		}
+		for _, e := range t.Entries {
+			// Clear task, since the field will be the same on all of them.
+			e.Task = nil
+		}
+
+		data, err := jsonv2.Marshal(t, jsontext.WithIndent("  "))
+		if err != nil {
+			return err
+		}
+		data = append(data, '\n')
+		if _, err := os.Stdout.Write(data); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

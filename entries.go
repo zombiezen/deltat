@@ -150,7 +150,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	var w *csv.Writer
 	if opts.format == csvOutputFormat {
 		w = csv.NewWriter(os.Stdout)
-		w.Write([]string{"ID", "Start Time", "End Time", "Task ID", "Description"})
+		w.Write(entryCSVHeaderRow())
 	}
 	totals := make(map[uuid.UUID]timesheetTotal)
 	var lastDateHeader gregorian.Date
@@ -243,18 +243,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				t.duration += endTimeForDuration.Sub(startTimeForDuration)
 				totals[e.Task.ID] = t
 			case csvOutputFormat:
-				var endTimeColumn string
-				if et := e.EndTime(); !et.IsZero() {
-					endTimeColumn = et.UTC().Format(time.RFC3339)
-				}
-				row := []string{
-					e.ID.String(),
-					e.StartTime.UTC().Format(time.RFC3339),
-					endTimeColumn,
-					e.Task.ID.String(),
-					e.Task.Description,
-				}
-				if err := w.Write(row); err != nil {
+				if err := w.Write(entryToCSV(e)); err != nil {
 					return err
 				}
 			case jsonOutputFormat:
@@ -313,6 +302,24 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	}
 
 	return nil
+}
+
+func entryCSVHeaderRow() []string {
+	return []string{"ID", "Start Time", "End Time", "Task ID", "Description"}
+}
+
+func entryToCSV(e *entry) []string {
+	var endTimeColumn string
+	if et := e.EndTime(); !et.IsZero() {
+		endTimeColumn = et.UTC().Format(time.RFC3339)
+	}
+	return []string{
+		e.ID.String(),
+		e.StartTime.UTC().Format(time.RFC3339),
+		endTimeColumn,
+		e.Task.ID.String(),
+		e.Task.Description,
+	}
 }
 
 func newStartCommand(g *globalConfig) *cobra.Command {
