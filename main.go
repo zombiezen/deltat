@@ -257,7 +257,24 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 
 	output, err := c.Output()
 	if err != nil {
-		err = fmt.Errorf("fzf: %v", err)
+		exitCode := -1
+		hasStderr := false
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
+			hasStderr = len(exitError.Stderr) > 0
+			exitCode = exitError.ExitCode()
+		}
+		switch {
+		case exitCode == 1 && !hasStderr:
+			// Exit code 1 is a common enough exit code that wrappers
+			// or other things may return.
+			// Only use this error message if there was no additional stderr output.
+			err = errFZFNoMatch
+		case exitCode == 130:
+			err = errFZFCanceled
+		default:
+			err = fmt.Errorf("fzf: %v", err)
+		}
 	}
 	<-done
 
@@ -267,6 +284,11 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 	output = bytes.TrimSuffix(output, []byte("\n"))
 	return strings.Split(string(output), "\n"), err
 }
+
+var (
+	errFZFNoMatch  = errors.New("fzf: no match")
+	errFZFCanceled = errors.New("fzf: user canceled")
+)
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
 	return enc.WriteToken(jsontext.String(u.String()))
