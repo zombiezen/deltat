@@ -211,8 +211,12 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 		recordSeparator = byte(0)
 	)
 
+	fzfPath := os.Getenv("DELTAT_FZF")
+	if fzfPath == "" {
+		fzfPath = "fzf"
+	}
 	c := exec.CommandContext(ctx,
-		"fzf",
+		fzfPath,
 		"--delimiter="+string(columnSeparator),
 		"--read0",
 		"--accept-nth=1",
