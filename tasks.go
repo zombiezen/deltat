@@ -38,6 +38,8 @@ type task struct {
 	ID          uuid.UUID `json:"id"`
 	Description string    `json:"description"`
 	Labels      []string  `json:"labels"`
+
+	EntryCount int `json:"-"`
 }
 
 func newTaskCommand(g *globalConfig) *cobra.Command {
@@ -322,11 +324,16 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool) error {
 
 func selectTask(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
 	opts = opts.clone()
-	opts.template = "{2}\t({1})"
+	opts.template = "{2} ({1})"
 
 	var rows [][2]string
 	err := listTasks(db, func(t *task) bool {
 		description := plainTaskDescription(t.Description, false)
+		if t.EntryCount == 1 {
+			description += "\n1 entry"
+		} else {
+			description = fmt.Sprintf("%s\n%d entries", t.Description, t.EntryCount)
+		}
 		rows = append(rows, [2]string{t.ID.String(), description})
 		return true
 	})
@@ -434,6 +441,7 @@ func fetchTask(db *sqlite.Conn, taskID uuid.UUID) (*task, error) {
 			result = &task{
 				ID:          taskID,
 				Description: stmt.GetText("description"),
+				EntryCount:  int(stmt.GetInt64("entry_count")),
 			}
 			var labelsBuf []byte
 			var err error
@@ -460,6 +468,7 @@ func listTasks(db *sqlite.Conn, yield func(*task) bool) error {
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			t := &task{
 				Description: stmt.GetText("description"),
+				EntryCount:  int(stmt.GetInt64("entry_count")),
 			}
 			var err error
 			t.ID, err = uuid.Parse(stmt.GetText("uuid"))
