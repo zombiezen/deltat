@@ -315,7 +315,7 @@ func initLogging(showDebug bool) {
 		}
 		log.SetDefault(&log.LevelFilter{
 			Min:    minLogLevel,
-			Output: log.New(os.Stderr, "deltat: ", log.StdFlags, nil),
+			Output: log.New(os.Stderr, "deltat: ", 0, nil),
 		})
 	})
 }
