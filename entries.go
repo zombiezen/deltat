@@ -243,10 +243,14 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				t.duration += endTimeForDuration.Sub(startTimeForDuration)
 				totals[e.Task.ID] = t
 			case csvOutputFormat:
+				var endTimeColumn string
+				if et := e.EndTime(); !et.IsZero() {
+					endTimeColumn = et.UTC().Format(time.RFC3339)
+				}
 				row := []string{
 					e.ID.String(),
 					e.StartTime.UTC().Format(time.RFC3339),
-					e.EndTime().UTC().Format(time.RFC3339),
+					endTimeColumn,
 					e.Task.ID.String(),
 					e.Task.Description,
 				}
