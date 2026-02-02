@@ -153,6 +153,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		w.Write(entryCSVHeaderRow())
 	}
 	totals := make(map[uuid.UUID]timesheetTotal)
+	totalsByLabel := make(map[string]time.Duration)
 	var lastDateHeader gregorian.Date
 	args := map[string]any{
 		":now": now.UTC().Format(time.RFC3339),
@@ -240,8 +241,12 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				} else if !opts.all && e.EndTime().After(maxTime) {
 					endTimeForDuration = maxTime
 				}
-				t.duration += endTimeForDuration.Sub(startTimeForDuration)
+				taskDuration := endTimeForDuration.Sub(startTimeForDuration)
+				t.duration += taskDuration
 				totals[e.Task.ID] = t
+				for _, label := range e.Task.Labels {
+					totalsByLabel[label] += taskDuration
+				}
 			case csvOutputFormat:
 				if err := w.Write(entryToCSV(e)); err != nil {
 					return err
@@ -281,6 +286,17 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		slices.SortFunc(totalList, func(a, b timesheetTotal) int {
 			return -cmp.Compare(a.duration, b.duration)
 		})
+		totalByLabelList := make([]timesheetTotal, 0, len(totals))
+		for label, duration := range totalsByLabel {
+			totalByLabelList = append(totalByLabelList, timesheetTotal{
+				description: label,
+				duration:    duration,
+			})
+		}
+		slices.SortFunc(totalByLabelList, func(a, b timesheetTotal) int {
+			return -cmp.Compare(a.duration, b.duration)
+		})
+
 		fmt.Print("\n# Totals\n\n")
 		const (
 			taskColumnWidth = 56
@@ -298,6 +314,24 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				taskColumnWidth, plainTaskDescription(t.description, false),
 				timeColumnWidth, formatDuration(t.duration),
 			)
+		}
+
+		if len(totalByLabelList) > 0 {
+			fmt.Print("\nBy label:\n\n")
+			const labelColumnWidth = 32
+			fmt.Printf("| %-*s | %-*s |\n", labelColumnWidth, "Label", timeColumnWidth, "Time")
+			fmt.Printf(
+				"| :%s | %s: |\n",
+				strings.Repeat("-", labelColumnWidth-1),
+				strings.Repeat("-", timeColumnWidth-1),
+			)
+			for _, t := range totalByLabelList {
+				fmt.Printf(
+					"| %-*s | %-*s |\n",
+					labelColumnWidth, t.description,
+					timeColumnWidth, formatDuration(t.duration),
+				)
+			}
 		}
 	}
 
