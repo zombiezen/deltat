@@ -471,18 +471,18 @@ func newTaskSelectCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "select",
 		Short:         "Run fzf on the tasks",
-		Args:          cobra.NoArgs,
+		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
 	multi := c.Flags().BoolP("multi", "m", false, "enable multi-select")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskSelect(cmd.Context(), g, *multi)
+		return runTaskSelect(cmd.Context(), g, *multi, taskDescriptionFromArgs(args))
 	}
 	return c
 }
 
-func runTaskSelect(ctx context.Context, g *globalConfig, multi bool) error {
+func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query string) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -490,7 +490,9 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool) error {
 	defer closeConn(ctx, db)
 
 	ids, err := selectTask(ctx, db, &fzfOptions{
-		multi: multi,
+		multi:        multi,
+		initialQuery: query,
+		select1:      query != "",
 	})
 	if err != nil {
 		return err

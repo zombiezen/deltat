@@ -187,8 +187,10 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 }
 
 type fzfOptions struct {
-	template string
-	multi    bool
+	template     string
+	multi        bool
+	initialQuery string
+	select1      bool
 }
 
 func (opts *fzfOptions) clone() *fzfOptions {
@@ -228,6 +230,14 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 		c.Args = append(c.Args, "--multi")
 	} else {
 		c.Args = append(c.Args, "--no-multi")
+	}
+	if opts != nil && opts.select1 {
+		c.Args = append(c.Args, "--select-1")
+	} else {
+		c.Args = append(c.Args, "--no-select-1")
+	}
+	if opts != nil && opts.initialQuery != "" {
+		c.Args = append(c.Args, "--query="+opts.initialQuery)
 	}
 
 	stdin, err := c.StdinPipe()
