@@ -164,7 +164,10 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	now := time.Now().UTC()
 	hasAny := false
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":limit": nil},
+		Named: map[string]any{
+			":now":   now.UTC().Format(time.RFC3339),
+			":limit": nil,
+		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			hasAny = true
 			description := plainTaskDescription(stmt.GetText("description"), true)

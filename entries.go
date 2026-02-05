@@ -43,6 +43,8 @@ type entry struct {
 	StartTime  time.Time  `json:"start_time,format:RFC3339"`
 	RawEndTime *time.Time `json:"end_time,format:RFC3339"`
 	Task       *task      `json:"task,omitzero"`
+
+	ScheduledEndTime time.Time `json:"-"`
 }
 
 func (e *entry) EndTime() time.Time {
@@ -446,10 +448,17 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 		defer endFn(&err)
 
+		if err := endScheduledEntries(db, startedAt); err != nil {
+			return err
+		}
+
 		var activeTask string
 		var hasActive bool
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
-			Named: map[string]any{":limit": 1},
+			Named: map[string]any{
+				":now":   startedAt.UTC().Format(time.RFC3339),
+				":limit": 1,
+			},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
 				activeTask = stmt.GetText("description")
 				hasActive = true
@@ -476,7 +485,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			taskDescription = task.Description
 		}
 
-		entryID, err = newEntry(db, taskID, startedAt, time.Time{})
+		entryID, err = newEntry(db, taskID, startedAt, time.Time{}, time.Time{})
 		if err != nil {
 			return err
 		}
@@ -498,7 +507,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		select {
 		case now := <-ticker.C:
 			var isEnded bool
-			if e, err := fetchEntry(db, entryID); isEntryNotFound(err) {
+			if e, err := fetchEntry(db, entryID, now); isEntryNotFound(err) {
 				// If no rows found, then assume ended.
 				isEnded = true
 			} else if err != nil {
@@ -627,14 +636,14 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 			return err
 		}
 	}
-	if _, err := newEntry(db, taskID, startTime, endTime); err != nil {
+	if _, err := newEntry(db, taskID, startTime, endTime, time.Time{}); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime time.Time) (uuid.UUID, error) {
+func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime, scheduledEndTime time.Time) (uuid.UUID, error) {
 	args := map[string]any{
 		":task_uuid":  taskID.String(),
 		":started_at": startTime.UTC().Format(time.RFC3339),
@@ -643,6 +652,11 @@ func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime time.Time) (
 		args[":ended_at"] = nil
 	} else {
 		args[":ended_at"] = endTime.UTC().Format(time.RFC3339)
+	}
+	if scheduledEndTime.IsZero() {
+		args[":scheduled_end_time"] = nil
+	} else {
+		args[":scheduled_end_time"] = scheduledEndTime.UTC().Format(time.RFC3339)
 	}
 	var entryID uuid.UUID
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
@@ -729,7 +743,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	}
 	defer endFn(&err)
 
-	if _, err := fetchEntry(db, entryID); err != nil {
+	if _, err := fetchEntry(db, entryID, now); err != nil {
 		return err
 	}
 
@@ -815,13 +829,15 @@ func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query string) error {
+	now := time.Now()
+
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeConn(ctx, db)
 
-	ids, err := selectEntry(ctx, db, &fzfOptions{
+	ids, err := selectEntry(ctx, db, now, &fzfOptions{
 		multi:        multi,
 		initialQuery: query,
 		select1:      query != "",
@@ -836,7 +852,7 @@ func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query stri
 	return nil
 }
 
-func selectEntry(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
+func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfOptions) (uuid.UUIDs, error) {
 	opts = opts.clone()
 	opts.template = "2.."
 	opts.outputTemplate = "1"
@@ -847,6 +863,7 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.U
 		var labelsBuf []byte
 		queryError = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_recent.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
+				":now":   now.UTC().Format(time.RFC3339),
 				":limit": -1,
 			},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -998,9 +1015,16 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	}
 	defer endFn(&err)
 
+	if err := endScheduledEntries(db, now); err != nil {
+		return err
+	}
+
 	var tasksToStop []string
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":limit": nil},
+		Named: map[string]any{
+			":now":   now.UTC().Format(time.RFC3339),
+			":limit": nil,
+		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
 			tasksToStop = append(tasksToStop, plainTaskDescription(stmt.GetText("description"), true))
 			return nil
@@ -1015,7 +1039,7 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	}
 
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop_all.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":now": now.Format(time.RFC3339)},
+		Named: map[string]any{":now": now.UTC().Format(time.RFC3339)},
 	})
 	if err != nil {
 		return err
@@ -1025,10 +1049,11 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	return nil
 }
 
-func fetchEntry(db *sqlite.Conn, entryID uuid.UUID) (*entry, error) {
+func fetchEntry(db *sqlite.Conn, entryID uuid.UUID, now time.Time) (*entry, error) {
 	var result *entry
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/get.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
+			":now":  now.UTC().Format(time.RFC3339),
 			":uuid": entryID.String(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -1058,6 +1083,13 @@ func fillEntryFromDatabase(e *entry, stmt *sqlite.Stmt) error {
 		}
 		e.RawEndTime = &t
 	}
+	if i := stmt.ColumnIndex("scheduled_end_time"); stmt.ColumnType(i) != sqlite.TypeNull {
+		var err error
+		e.ScheduledEndTime, err = time.Parse(timestampLayout, stmt.ColumnText(i))
+		if err != nil {
+			return fmt.Errorf("end_time: %v", err)
+		}
+	}
 	return nil
 }
 
@@ -1071,4 +1103,19 @@ func (e *entryNotFoundError) Error() string {
 
 func isEntryNotFound(err error) bool {
 	return errors.As(err, new(*entryNotFoundError))
+}
+
+// endScheduledEntries sets the end time of any entries
+// that have a scheduled end time before the given time
+// to their scheduled end time.
+func endScheduledEntries(db *sqlite.Conn, now time.Time) error {
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/end_scheduled.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":now": now.UTC().Format(time.RFC3339),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("mark end times for scheduled entries: %v", err)
+	}
+	return nil
 }

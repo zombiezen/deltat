@@ -272,6 +272,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, form
 	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_by_task.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
+			":now":       time.Now().UTC(),
 			":task_uuid": taskID.String(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {

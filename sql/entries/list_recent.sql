@@ -1,7 +1,26 @@
+with
+  "resolved_entries" as (
+    select
+      "uuid" as "uuid",
+      "task_uuid" as "task_uuid",
+      "start_time" as "start_time",
+      case
+        when "end_time" is not null then
+          "end_time"
+        when "scheduled_end_time" <= strftime('%FT%T',:now) then
+          "scheduled_end_time"
+      end as "end_time",
+      iif(
+        "end_time" is null and "scheduled_end_time" > strftime('%FT%T',:now),
+        "scheduled_end_time",
+        null) as "scheduled_end_time"
+    from "entries"
+  )
 select
   uuidhex("entries"."uuid") as "uuid",
   "entries"."start_time" as "start_time",
   "entries"."end_time" as "end_time",
+  "entries"."scheduled_end_time" as "scheduled_end_time",
 
   uuidhex("tasks"."uuid") as "task.uuid",
   "tasks"."description" as "task.description",
@@ -12,7 +31,7 @@ select
     where tl."task_uuid" = "tasks"."uuid"
     order by l."name") as "task.labels"
 from
-  "entries"
+  "resolved_entries" as "entries"
   join "tasks" on "entries"."task_uuid" = "tasks"."uuid"
 order by
   "entries"."start_time" desc
