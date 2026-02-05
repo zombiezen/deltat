@@ -84,6 +84,7 @@ func main() {
 	rootCommand.AddCommand(
 		newEntryCommand(g),
 		newLabelCommand(g),
+		newPomodoroSettingsCommand(g),
 		newShellCommand(g),
 		newStartCommand(g),
 		newStatusCommand(g),

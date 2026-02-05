@@ -1,0 +1,3 @@
+env DELTAT_DB=$PWD/foo.sqlite
+deltat pomodoro-settings
+stdout '^25 minutes followed by 5-minute break$'

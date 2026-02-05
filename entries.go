@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/csv"
@@ -373,6 +374,8 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVarP(&opts.continueInteractive, "continue", "c", false, "continue a previous task (using fzf to select)")
 	c.Flags().StringVar(&opts.continueID, "continue-task", "", "`ID` of a previous task to continue")
 	c.Flags().StringVarP(&opts.startTimeOverride, "time", "t", "", "`time` to use for the entry's start")
+	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "scheduled end `time` for task (can be a duration like \"1h5m\")")
+	c.Flags().BoolVarP(&opts.pomodoro, "pomodoro", "p", false, "run a timed session")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.newTaskOptions.description = taskDescriptionFromArgs(args)
 		var err error
@@ -389,9 +392,11 @@ type startOptions struct {
 	*globalConfig
 	newTaskOptions      newTaskOptions
 	startTimeOverride   string
+	endTime             string
 	detach              bool
 	continueID          string
 	continueInteractive bool
+	pomodoro            bool
 }
 
 func runStart(ctx context.Context, opts *startOptions) error {
@@ -430,7 +435,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 
 		if opts.startTimeOverride == "" {
 			// Don't count the time interactively selecting the task.
-			startedAt = time.Now().UTC()
+			startedAt = time.Now()
 		}
 	case opts.continueID != "":
 		var err error
@@ -440,7 +445,27 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 	}
 
+	var scheduledEndTime time.Time
+	if opts.endTime != "" {
+		if d, err := time.ParseDuration(opts.endTime); err == nil {
+			scheduledEndTime = startedAt.Add(d)
+		} else {
+			var err error
+			scheduledEndTime, err = parseTime(startedAt, opts.endTime)
+			if err != nil {
+				return fmt.Errorf("parse end time: %v", err)
+			}
+			if !scheduledEndTime.After(startedAt) {
+				return fmt.Errorf("end time (%s) is before start (%s)",
+					scheduledEndTime.Format(time.RFC3339),
+					startedAt.Format(time.RFC3339),
+				)
+			}
+		}
+	}
+
 	var entryID uuid.UUID
+	var breakEndTime time.Time
 	err = func() (err error) {
 		endFn, err := sqlitex.ImmediateTransaction(db)
 		if err != nil {
@@ -450,6 +475,19 @@ func runStart(ctx context.Context, opts *startOptions) error {
 
 		if err := endScheduledEntries(db, startedAt); err != nil {
 			return err
+		}
+
+		if opts.pomodoro {
+			cfg, err := readPomodoroConfiguration(db)
+			if err != nil {
+				return err
+			}
+			if scheduledEndTime.IsZero() {
+				scheduledEndTime = startedAt.Add(cfg.duration)
+			}
+			if cfg.breakDuration > 0 {
+				breakEndTime = scheduledEndTime.Add(cfg.breakDuration)
+			}
 		}
 
 		var activeTask string
@@ -485,7 +523,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			taskDescription = task.Description
 		}
 
-		entryID, err = newEntry(db, taskID, startedAt, time.Time{}, time.Time{})
+		entryID, err = newEntry(db, taskID, startedAt, time.Time{}, scheduledEndTime)
 		if err != nil {
 			return err
 		}
@@ -496,7 +534,20 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		return err
 	}
 
-	fmt.Printf("“%s” started at %s\n", taskDescription, startedAt.Local().Format(time.Kitchen))
+	initialMessage := new(bytes.Buffer)
+	initialMessage.WriteString(plainTaskDescription(taskDescription, true))
+	initialMessage.WriteString(" started at ")
+	initialMessage.WriteString(startedAt.Local().Format(time.Kitchen))
+	if !scheduledEndTime.IsZero() {
+		initialMessage.WriteString("; will end at ")
+		initialMessage.WriteString(scheduledEndTime.Local().Format(time.Kitchen))
+	}
+	if !breakEndTime.IsZero() {
+		initialMessage.WriteString(". Break ends at ")
+		initialMessage.WriteString(breakEndTime.Local().Format(time.Kitchen))
+	}
+	initialMessage.WriteString(".\n")
+	initialMessage.WriteTo(os.Stdout)
 	if opts.detach {
 		return nil
 	}
@@ -506,23 +557,31 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	for {
 		select {
 		case now := <-ticker.C:
-			var isEnded bool
-			if e, err := fetchEntry(db, entryID, now); isEntryNotFound(err) {
-				// If no rows found, then assume ended.
-				isEnded = true
-			} else if err != nil {
+			newStartTime, newEndTime, newScheduledEndTime, err := pollEnd(db, entryID, now, scheduledEndTime)
+			if err != nil {
 				log.Warnf(ctx, "Read entry: %v", err)
-			} else {
-				startedAt = e.StartTime
-				isEnded = !e.isActive()
 			}
-			if isEnded {
+			if !newStartTime.IsZero() {
+				startedAt = newStartTime
+			}
+			if !newEndTime.IsZero() {
 				// Another process ended or removed the entry.
-				fmt.Printf("\nEnded at %s\n", now.UTC().Format(time.Kitchen))
+				fmt.Printf("\nEnded at %s\n", newEndTime.Local().Format(time.Kitchen))
 				return nil
 			}
+			scheduledEndTime = newScheduledEndTime
 
-			fmt.Printf("\r%s elapsed", formatDuration(now.Sub(startedAt)))
+			if scheduledEndTime.IsZero() {
+				fmt.Printf("\r%s elapsed", formatDuration(now.Sub(startedAt)))
+			} else {
+				// Round everything so that the formatted durations add up to the user-specified duration.
+				// Satisfies my constant need to add both numbers and have it be a whole number. 😅
+				fmt.Printf(
+					"\r%s elapsed (%s remaining)",
+					formatDuration(now.Sub(startedAt.Round(time.Second)).Round(time.Second)),
+					formatDuration(scheduledEndTime.Round(time.Second).Sub(now).Round(time.Second)),
+				)
+			}
 		case <-ctx.Done():
 			now := time.Now()
 
@@ -552,6 +611,42 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			return nil
 		}
 	}
+}
+
+// pollEnd updates the timing information about an entry in a new database transaction.
+// If the entry has a scheduled end time,
+// then pollEnd will handle writing the end time as appropriate.
+// pollEnd generally tries to use read transactions where possible
+// to avoid locking out other processes.
+func pollEnd(db *sqlite.Conn, entryID uuid.UUID, now, scheduledEndTime time.Time) (startTime, endTime, newScheduledEndTime time.Time, err error) {
+	if scheduledEndTime.IsZero() || now.Before(scheduledEndTime) {
+		rollback, err := readonlySavepoint(db)
+		if err != nil {
+			return time.Time{}, time.Time{}, scheduledEndTime, err
+		}
+		defer rollback()
+	} else {
+		var endFn func(*error)
+		endFn, err = sqlitex.ExclusiveTransaction(db)
+		if err != nil {
+			return time.Time{}, time.Time{}, scheduledEndTime, err
+		}
+		defer endFn(&err)
+
+		if err := endScheduledEntries(db, now); err != nil {
+			return time.Time{}, time.Time{}, scheduledEndTime, err
+		}
+	}
+
+	e, err := fetchEntry(db, entryID, now)
+	if isEntryNotFound(err) {
+		// If no rows found, then assume ended.
+		return time.Time{}, now, scheduledEndTime, nil
+	}
+	if err != nil {
+		return time.Time{}, time.Time{}, scheduledEndTime, err
+	}
+	return e.StartTime, e.EndTime(), e.ScheduledEndTime, nil
 }
 
 func newEntryNewCommand(g *globalConfig) *cobra.Command {

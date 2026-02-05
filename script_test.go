@@ -41,6 +41,10 @@ func TestLabels(t *testing.T) {
 	runScriptTests(t, "testdata/labels/*.txt")
 }
 
+func TestPomodoro(t *testing.T) {
+	runScriptTests(t, "testdata/pomodoro/*.txt")
+}
+
 func TestTasks(t *testing.T) {
 	runScriptTests(t, "testdata/tasks/*.txt")
 }

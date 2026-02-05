@@ -52,3 +52,18 @@ create table "entries" (
 create index "entries_by_task" on "entries" ("task_uuid", "start_time" desc, "uuid");
 
 create index "entries_reverse_chronological" on "entries" ("start_time" desc, "uuid");
+
+create table "pomodoro_configuration" (
+  "duration_minutes" integer
+    not null
+    check ("duration_minutes" > 0)
+    default 25,
+  "break_duration_minutes" integer
+    not null
+    check ("break_duration_minutes" >= 0)
+    default 5,
+
+  check ("rowid" is 1)
+);
+
+insert into "pomodoro_configuration" default values;
