@@ -187,7 +187,23 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 }
 
 type fzfOptions struct {
-	template     string
+	// template is the field index expression or template
+	// for transforming each item for display.
+	// If empty, the item is displayed as-is.
+	template string
+	// outputTemplate is the field index expression or template
+	// for transforming each accepted item.
+	// If empty, accepted item(s) are returned as-is.
+	outputTemplate string
+	// searchScope is the field index expression
+	// for limiting search scope
+	// on the displayed template.
+	searchScope string
+	// delimiter is a regular expression for template, outputTemplate, and searchScope
+	// field index expressions.
+	// If empty, then fields are separated by whitespace.
+	delimiter string
+
 	multi        bool
 	initialQuery string
 	select1      bool
@@ -201,31 +217,34 @@ func (opts *fzfOptions) clone() *fzfOptions {
 	return opts2
 }
 
-func (opts *fzfOptions) templateFlagValue() string {
-	if opts == nil || opts.template == "" {
-		return "{2}"
-	}
-	return opts.template
-}
-
-func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions) ([]string, error) {
-	const (
-		columnSeparator = byte(0x1f) // unit separator in ASCII
-		recordSeparator = byte(0)
-	)
-
+func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]string, error) {
 	fzfPath := os.Getenv("DELTAT_FZF")
 	if fzfPath == "" {
 		fzfPath = "fzf"
 	}
 	c := exec.CommandContext(ctx,
 		fzfPath,
-		"--delimiter="+string(columnSeparator),
 		"--read0",
-		"--accept-nth=1",
-		"--with-nth="+opts.templateFlagValue(),
+		"--print0",
 		"--no-sort",
 	)
+	if opts != nil {
+		if opts.delimiter != "" {
+			c.Args = append(c.Args, "--delimiter="+opts.delimiter)
+		}
+		if opts.template != "" {
+			c.Args = append(c.Args, "--with-nth="+opts.template)
+		}
+		if opts.outputTemplate != "" {
+			c.Args = append(c.Args, "--accept-nth="+opts.outputTemplate)
+		}
+		if opts.searchScope != "" {
+			c.Args = append(c.Args, "--nth="+opts.searchScope)
+		}
+		if opts.initialQuery != "" {
+			c.Args = append(c.Args, "--query="+opts.initialQuery)
+		}
+	}
 	if opts != nil && opts.multi {
 		c.Args = append(c.Args, "--multi")
 	} else {
@@ -235,9 +254,6 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 		c.Args = append(c.Args, "--select-1")
 	} else {
 		c.Args = append(c.Args, "--no-select-1")
-	}
-	if opts != nil && opts.initialQuery != "" {
-		c.Args = append(c.Args, "--query="+opts.initialQuery)
 	}
 
 	stdin, err := c.StdinPipe()
@@ -253,17 +269,14 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 		}()
 
 		var buf []byte
-		r := strings.NewReplacer(string(columnSeparator), "", string(recordSeparator), "")
-		for id, data := range items {
-			if strings.ContainsAny(id, string(columnSeparator)+string(recordSeparator)) {
-				log.Warnf(ctx, "fzf: invalid id %q", id)
+		for item := range items {
+			if strings.Contains(item, "\x00") {
+				log.Warnf(ctx, "fzf: invalid item %q", item)
 				continue
 			}
 			buf = buf[:0]
-			buf = append(buf, id...)
-			buf = append(buf, columnSeparator)
-			buf = append(buf, r.Replace(data)...)
-			buf = append(buf, recordSeparator)
+			buf = append(buf, item...)
+			buf = append(buf, 0)
 			if _, err := stdin.Write(buf); err != nil {
 				return
 			}
@@ -296,8 +309,8 @@ func fzf(ctx context.Context, items iter.Seq2[string, string], opts *fzfOptions)
 	if len(output) == 0 {
 		return nil, err
 	}
-	output = bytes.TrimSuffix(output, []byte("\n"))
-	return strings.Split(string(output), "\n"), err
+	output = bytes.TrimSuffix(output, []byte{0})
+	return strings.Split(string(output), "\x00"), err
 }
 
 var (

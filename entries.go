@@ -838,10 +838,12 @@ func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query stri
 
 func selectEntry(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
 	opts = opts.clone()
-	opts.template = ""
+	opts.template = "2.."
+	opts.outputTemplate = "1"
+	opts.delimiter = "\n"
 
 	var queryError error
-	output, err := fzf(ctx, func(yield func(string, string) bool) {
+	output, err := fzf(ctx, func(yield func(string) bool) {
 		var labelsBuf []byte
 		queryError = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_recent.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
@@ -874,27 +876,30 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.U
 				switch {
 				case e.isActive():
 					s = fmt.Sprintf(
-						"%s\n%s – present\n",
+						"%v\n%s\n%s – present\n",
+						e.Task.ID,
 						plainTaskDescription(e.Task.Description, false),
 						e.StartTime.Local().Format("2006-01-02T15:04"),
 					)
 				case !startDate.Equal(localDateFromTime(e.EndTime())):
 					s = fmt.Sprintf(
-						"%s\n%s – %s",
+						"%v\n%s\n%s – %s",
+						e.Task.ID,
 						plainTaskDescription(e.Task.Description, false),
 						e.StartTime.Local().Format("2006-01-02T15:04"),
 						e.EndTime().Local().Format("2006-01-02T15:04"),
 					)
 				default:
 					s = fmt.Sprintf(
-						"%s\n%v %7s – %7s",
+						"%v\n%s\n%v %7s – %7s",
+						e.Task.ID,
 						plainTaskDescription(e.Task.Description, false),
 						startDate,
 						e.StartTime.Local().Format(time.Kitchen),
 						e.EndTime().Local().Format(time.Kitchen),
 					)
 				}
-				if !yield(e.ID.String(), s) {
+				if !yield(s) {
 					return fmt.Errorf("iteration stopped")
 				}
 

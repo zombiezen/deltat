@@ -506,30 +506,28 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query strin
 
 func selectTask(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
 	opts = opts.clone()
-	opts.template = "{2} ({1})"
+	opts.template = "2.."
+	opts.outputTemplate = "1"
+	opts.searchScope = "1"
+	opts.delimiter = "\n"
 
-	var rows [][2]string
+	var rows []string
 	err := listTasks(db, func(t *task) bool {
-		description := plainTaskDescription(t.Description, false)
+		item := t.ID.String() + "\n" + plainTaskDescription(t.Description, false)
 		if t.EntryCount == 1 {
-			description += "\n1 entry"
+			item += "\n1 entry"
 		} else {
-			description = fmt.Sprintf("%s\n%d entries", t.Description, t.EntryCount)
+			item = fmt.Sprintf("%s\n%d entries", item, t.EntryCount)
 		}
-		rows = append(rows, [2]string{t.ID.String(), description})
+		item += " (" + t.ID.String() + ")"
+		rows = append(rows, item)
 		return true
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	output, err := fzf(ctx, func(yield func(string, string) bool) {
-		for _, row := range rows {
-			if !yield(row[0], row[1]) {
-				return
-			}
-		}
-	}, opts)
+	output, err := fzf(ctx, slices.Values(rows), opts)
 	if err != nil {
 		return nil, err
 	}
