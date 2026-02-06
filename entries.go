@@ -1052,7 +1052,7 @@ func fillEntryFromDatabase(e *entry, stmt *sqlite.Stmt) error {
 		return fmt.Errorf("start_time: %v", err)
 	}
 	if i := stmt.ColumnIndex("end_time"); stmt.ColumnType(i) != sqlite.TypeNull {
-		t, err := time.Parse(timestampLayout, stmt.GetText("end_time"))
+		t, err := time.Parse(timestampLayout, stmt.ColumnText(i))
 		if err != nil {
 			return fmt.Errorf("end_time: %v", err)
 		}
