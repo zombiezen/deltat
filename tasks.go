@@ -18,6 +18,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/csv"
 	"errors"
@@ -32,6 +33,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"zombiezen.com/go/deltat/internal/escape"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
 )
@@ -477,7 +479,12 @@ func newTaskSelectCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	multi := c.Flags().BoolP("multi", "m", false, "enable multi-select")
+	reload := c.Flags().Bool("reload", false, "print the fzf input")
+	c.Flags().MarkHidden("reload")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
+		if *reload {
+			return runTaskSelectReload(cmd.Context(), g)
+		}
 		return runTaskSelect(cmd.Context(), g, *multi, taskDescriptionFromArgs(args))
 	}
 	return c
@@ -490,10 +497,14 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query strin
 	}
 	defer closeConn(ctx, db)
 
-	ids, err := selectTask(ctx, db, &fzfOptions{
-		multi:        multi,
-		initialQuery: query,
-		select1:      query != "",
+	ids, err := selectTask(ctx, db, &selectTaskOptions{
+		deltatExecutable: g.executablePath,
+		databasePath:     g.dbPath,
+		fzfOptions: fzfOptions{
+			multi:        multi,
+			initialQuery: query,
+			select1:      query != "",
+		},
 	})
 	if err != nil {
 		return err
@@ -505,34 +516,94 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query strin
 	return nil
 }
 
-func selectTask(ctx context.Context, db *sqlite.Conn, opts *fzfOptions) (uuid.UUIDs, error) {
-	opts = opts.clone()
-	opts.template = "2.."
-	opts.outputTemplate = "1"
-	opts.searchScope = "1"
-	opts.delimiter = "\n"
+func runTaskSelectReload(ctx context.Context, g *globalConfig) error {
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+
+	sb := new(strings.Builder)
+	err = listTasks(db, func(t *task) bool {
+		writeTaskSelectItem(sb, t)
+		sb.WriteByte(0)
+		return true
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stdout.WriteString(sb.String()); err != nil {
+		return err
+	}
+	return nil
+}
+
+type selectTaskOptions struct {
+	fzfOptions       fzfOptions
+	deltatExecutable string
+	databasePath     string
+}
+
+func selectTask(ctx context.Context, db *sqlite.Conn, opts *selectTaskOptions) (uuid.UUIDs, error) {
+	if opts == nil {
+		opts = new(selectTaskOptions)
+	}
+	exeForShell := escape.Bash(cmp.Or(opts.deltatExecutable, "deltat"))
+	dbPathForShell := escape.Bash(opts.databasePath)
+
+	fopts := opts.fzfOptions.clone()
+	fopts.template = "2.."
+	fopts.outputTemplate = "1"
+	fopts.searchScope = "1"
+	fopts.delimiter = "\n"
+
+	bind := new(strings.Builder)
+	reloadCommand := exeForShell + " task select --db=" + dbPathForShell + " --reload"
+	bind.WriteString("ctrl-r:")
+	writeFZFActionWithArgument(bind, "reload", reloadCommand)
+	newTaskCommand := exeForShell + " task new --db=" + dbPathForShell + " -- {q}"
+	bind.WriteString(",ctrl-n:")
+	writeFZFActionWithArgument(bind, "execute", newTaskCommand)
+	bind.WriteString("+")
+	writeFZFActionWithArgument(bind, "reload", reloadCommand)
+	bind.WriteString(",ctrl-p:") // Unbind up-match. (ctrl-n is down-match.)
+	if fopts.bind != "" {
+		bind.WriteString(",")
+		bind.WriteString(fopts.bind)
+	}
+	fopts.bind = bind.String()
 
 	var rows []string
 	err := listTasks(db, func(t *task) bool {
-		item := t.ID.String() + "\n" + plainTaskDescription(t.Description, false)
-		if t.EntryCount == 1 {
-			item += "\n1 entry"
-		} else {
-			item = fmt.Sprintf("%s\n%d entries", item, t.EntryCount)
-		}
-		item += " (" + t.ID.String() + ")"
-		rows = append(rows, item)
+		item := new(strings.Builder)
+		writeTaskSelectItem(item, t)
+		rows = append(rows, item.String())
 		return true
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	output, err := fzf(ctx, slices.Values(rows), opts)
+	output, err := fzf(ctx, slices.Values(rows), fopts)
 	if err != nil {
 		return nil, err
 	}
 	return parseUUIDs(output)
+}
+
+func writeTaskSelectItem(sb *strings.Builder, t *task) {
+	sb.WriteString(t.ID.String())
+	sb.WriteString("\n")
+	sb.WriteString(plainTaskDescription(t.Description, false))
+	sb.WriteString("\n")
+	if t.EntryCount == 1 {
+		sb.WriteString("1 entry")
+	} else {
+		fmt.Fprintf(sb, "%d entries", t.EntryCount)
+	}
+	sb.WriteString(" (")
+	sb.WriteString(t.ID.String())
+	sb.WriteString(")")
 }
 
 func newTaskDeleteCommand(g *globalConfig) *cobra.Command {

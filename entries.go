@@ -377,7 +377,12 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "scheduled end `time` for task (can be a duration like \"1h5m\")")
 	c.Flags().BoolVarP(&opts.pomodoro, "pomodoro", "p", false, "run a timed session")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.newTaskOptions.description = taskDescriptionFromArgs(args)
+		switch {
+		case len(args) == 0 && opts.continueID == "":
+			opts.continueInteractive = true
+		case len(args) > 0:
+			opts.newTaskOptions.description = taskDescriptionFromArgs(args)
+		}
 		var err error
 		opts.newTaskOptions.labels, err = cleanLabels(opts.newTaskOptions.labels)
 		if err != nil {
@@ -424,7 +429,10 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	taskDescription := opts.newTaskOptions.description
 	switch {
 	case opts.continueInteractive:
-		taskIDs, err := selectTask(ctx, db, nil)
+		taskIDs, err := selectTask(ctx, db, &selectTaskOptions{
+			deltatExecutable: opts.executablePath,
+			databasePath:     opts.dbPath,
+		})
 		if err != nil {
 			return err
 		}

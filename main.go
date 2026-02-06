@@ -42,7 +42,8 @@ import (
 )
 
 type globalConfig struct {
-	dbPath string
+	executablePath string
+	dbPath         string
 }
 
 func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
@@ -74,6 +75,14 @@ func main() {
 	}
 
 	g := new(globalConfig)
+	var err error
+	g.executablePath, err = os.Executable()
+	if err != nil {
+		initLogging(false)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
+	}
+
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
 	rootCommand.PersistentFlags().StringVar(&g.dbPath, "db", os.Getenv("DELTAT_DB"), "`path` to database")
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
@@ -94,7 +103,7 @@ func main() {
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), sigterm...)
-	err := rootCommand.ExecuteContext(ctx)
+	err = rootCommand.ExecuteContext(ctx)
 	cancel()
 	if err != nil {
 		initLogging(*showDebug)
@@ -208,6 +217,8 @@ type fzfOptions struct {
 	// If empty, then fields are separated by whitespace.
 	delimiter string
 
+	bind string
+
 	multi        bool
 	initialQuery string
 	select1      bool
@@ -247,6 +258,9 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 		}
 		if opts.initialQuery != "" {
 			c.Args = append(c.Args, "--query="+opts.initialQuery)
+		}
+		if opts.bind != "" {
+			c.Args = append(c.Args, "--bind="+opts.bind)
 		}
 	}
 	if opts != nil && opts.multi {
@@ -321,6 +335,25 @@ var (
 	errFZFNoMatch  = errors.New("fzf: no match")
 	errFZFCanceled = errors.New("fzf: user canceled")
 )
+
+// writeFZFActionWithArgument writes "action(...)" to sb with an acceptable delimiter.
+// writeFZFActionWithArgument returns an error if arg cannot be escaped properly.
+// See the "ACTION ARGUMENT" section of `fzf --man` for more details.
+func writeFZFActionWithArgument(sb *strings.Builder, action, arg string) error {
+	const delims = "()[]{}<>~~!!@@##$$%%&&**;;//||"
+	for i := 0; i+1 < len(delims); i += 2 {
+		startChar := delims[i]
+		endChar := delims[i+1]
+		if strings.IndexByte(arg, endChar) < 0 {
+			sb.WriteString(action)
+			sb.WriteByte(startChar)
+			sb.WriteString(arg)
+			sb.WriteByte(endChar)
+			return nil
+		}
+	}
+	return fmt.Errorf("fzf: %s action argument %q is not safe", action, arg)
+}
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
 	return enc.WriteToken(jsontext.String(u.String()))
