@@ -989,14 +989,14 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 				case e.isActive():
 					s = fmt.Sprintf(
 						"%v\n%s\n%s – present\n",
-						e.Task.ID,
+						e.ID,
 						plainTaskDescription(e.Task.Description, false),
 						e.StartTime.Local().Format("2006-01-02T15:04"),
 					)
 				case !startDate.Equal(localDateFromTime(e.EndTime())):
 					s = fmt.Sprintf(
 						"%v\n%s\n%s – %s",
-						e.Task.ID,
+						e.ID,
 						plainTaskDescription(e.Task.Description, false),
 						e.StartTime.Local().Format("2006-01-02T15:04"),
 						e.EndTime().Local().Format("2006-01-02T15:04"),
@@ -1004,7 +1004,7 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 				default:
 					s = fmt.Sprintf(
 						"%v\n%s\n%v %7s – %7s",
-						e.Task.ID,
+						e.ID,
 						plainTaskDescription(e.Task.Description, false),
 						startDate,
 						e.StartTime.Local().Format(time.Kitchen),
