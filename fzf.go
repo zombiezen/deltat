@@ -53,6 +53,9 @@ type fzfOptions struct {
 	multi        bool
 	initialQuery string
 	select1      bool
+
+	border      string
+	borderLabel string
 }
 
 func (opts *fzfOptions) clone() *fzfOptions {
@@ -92,6 +95,12 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 		}
 		if opts.bind != "" {
 			c.Args = append(c.Args, "--bind="+opts.bind)
+		}
+		if opts.border != "" {
+			c.Args = append(c.Args, "--border="+opts.border)
+		}
+		if opts.borderLabel != "" {
+			c.Args = append(c.Args, "--border-label="+opts.borderLabel)
 		}
 	}
 	if opts != nil && opts.multi {

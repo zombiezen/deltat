@@ -556,6 +556,8 @@ func selectTask(ctx context.Context, db *sqlite.Conn, opts *selectTaskOptions) (
 	fopts.outputTemplate = "1"
 	fopts.searchScope = "1"
 	fopts.delimiter = "\n"
+	fopts.border = "rounded"
+	fopts.borderLabel = "Tasks"
 
 	bind := new(strings.Builder)
 	reloadCommand := exeForShell + " task select --db=" + dbPathForShell + " --reload"

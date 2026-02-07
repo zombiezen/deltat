@@ -960,6 +960,8 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 	opts.template = "2.."
 	opts.outputTemplate = "1"
 	opts.delimiter = "\n"
+	opts.border = "rounded"
+	opts.borderLabel = "Entries"
 
 	var queryError error
 	output, err := fzf(ctx, func(yield func(string) bool) {
