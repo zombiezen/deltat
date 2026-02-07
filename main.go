@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"iter"
@@ -46,7 +47,7 @@ type globalConfig struct {
 
 func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
 	if g.dbPath == "" {
-		return nil, fmt.Errorf("DELTAT_DB not set")
+		return nil, fmt.Errorf("must set DELTAT_DB or pass --db flag")
 	}
 	conn, err := sqlite.OpenConn(g.dbPath, sqlite.OpenReadWrite, sqlite.OpenCreate)
 	if err != nil {
@@ -64,10 +65,14 @@ func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
 	return conn, nil
 }
 
+//go:embed docs/deltat.txt
+var rootCommandHelp string
+
 func main() {
 	rootCommand := &cobra.Command{
 		Use:           "deltat",
 		Short:         "time tracker",
+		Long:          rootCommandHelp,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -88,6 +93,10 @@ func main() {
 		return nil
 	}
 
+	rootCommand.AddGroup(&cobra.Group{
+		ID:    "basic",
+		Title: "Everyday Commands:",
+	})
 	rootCommand.AddCommand(
 		newEntryCommand(g),
 		newLabelCommand(g),
@@ -150,6 +159,7 @@ func runShell(ctx context.Context, g *globalConfig) error {
 
 func newStatusCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
+		GroupID:       "basic",
 		Use:           "status",
 		Short:         "Show currently running task",
 		Args:          cobra.NoArgs,

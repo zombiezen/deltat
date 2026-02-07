@@ -1,0 +1,17 @@
+Starts a new time entry.
+
+If no arguments are given (or --continue is passed), then fzf is opened
+to pick the task to associate the entry to. Ctrl-N can be pressed to
+create a new task with a description from the input box.
+(To use a specific fzf binary, set the DELTAT_FZF environment variable.)
+If --continue-task is passed, then the task with that ID is used.
+Otherwise, a new task with the given flags are used.
+
+If --end is passed, then the entry will be ended at the given time
+unless the entry is manually ended before then. --pomodoro implies an end time
+of 25 minutes in the future (or whatever is set using
+the pomdoro-settings command).
+
+If --detach is passed, then the command will exit immediately
+after creating the entry. Otherwise, the command will continue until
+it is interrupted by Ctrl-C, SIGINT, or SIGTERM.

@@ -1,0 +1,8 @@
+Time tracker.
+
+Most commands require the DELTAT_DB environment variable or the --db flag
+to specify the database to work on.
+
+Several different commands use fzf.
+To use a specific fzf binary, set the DELTAT_FZF environment variable.
+

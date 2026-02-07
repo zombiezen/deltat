@@ -1,0 +1,6 @@
+Runs fzf on the tasks.
+
+At the end, prints the selected task IDs, one per line.
+
+Ctrl-N can be pressed to create a new task with a description from the input box.
+To use a specific fzf binary, set the DELTAT_FZF environment variable.

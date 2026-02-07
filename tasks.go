@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	_ "embed"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -476,10 +477,14 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	return nil
 }
 
+//go:embed docs/task-select.txt
+var taskSelectCommandHelp string
+
 func newTaskSelectCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "select",
 		Short:         "Run fzf on the tasks",
+		Long:          taskSelectCommandHelp,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,

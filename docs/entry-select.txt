@@ -1,0 +1,5 @@
+Runs fzf on the entries.
+
+At the end, prints the selected entry IDs, one per line.
+
+To use a specific fzf binary, set the DELTAT_FZF environment variable.

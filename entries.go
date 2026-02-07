@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	_ "embed"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -77,6 +78,7 @@ func newEntryCommand(g *globalConfig) *cobra.Command {
 
 func newTimesheetCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
+		GroupID:       "basic",
 		Use:           "timesheet [flags] [START_DATE [END_DATE]]",
 		Short:         "Show a daily breakdown",
 		Args:          cobra.MaximumNArgs(2),
@@ -359,10 +361,15 @@ func entryToCSV(e *entry) []string {
 	}
 }
 
+//go:embed docs/start.txt
+var startCommandHelp string
+
 func newStartCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
+		GroupID:               "basic",
 		Use:                   "start [flags] [DESCRIPTION]",
 		Short:                 "Start a new entry",
+		Long:                  startCommandHelp,
 		Args:                  cobra.ArbitraryArgs,
 		DisableFlagsInUseLine: true,
 		SilenceErrors:         true,
@@ -916,10 +923,14 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	return nil
 }
 
+//go:embed docs/entry-select.txt
+var entrySelectCommandHelp string
+
 func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "select",
 		Short:         "Run fzf on the entries",
+		Long:          entrySelectCommandHelp,
 		Args:          cobra.ArbitraryArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -1094,6 +1105,7 @@ func runEntryDelete(ctx context.Context, g *globalConfig, idStrings []string) er
 
 func newStopCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
+		GroupID:       "basic",
 		Use:           "stop",
 		Short:         "Stop the currently tracked task",
 		Args:          cobra.NoArgs,
