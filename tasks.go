@@ -190,12 +190,17 @@ func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {
 	}
 
 	defer sqlitex.Save(db)(&err)
-	createdAt := time.Unix(id.Time().UnixTime()).UTC()
+	var createdAt time.Time
+	if testTime.IsZero() {
+		createdAt = time.Unix(id.Time().UnixTime())
+	} else {
+		createdAt = getNow()
+	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/insert.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
 			":uuid":        id.String(),
 			":description": opts.description,
-			":created_at":  createdAt.Format(time.RFC3339),
+			":created_at":  createdAt.UTC().Format(time.RFC3339),
 		},
 	})
 	if err != nil {
