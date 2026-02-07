@@ -95,7 +95,7 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 		} else {
 			switch len(args) {
 			case 0:
-				now := time.Now()
+				now := getNow()
 				today := gregorian.NewDate(now.Year(), now.Month(), now.Day())
 				opts.startDate, opts.endDate = today, today
 			case 1:
@@ -139,7 +139,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		description string
 		duration    time.Duration
 	}
-	now := time.Now().UTC()
+	now := getNow()
 
 	db, err := opts.open(ctx)
 	if err != nil {
@@ -405,7 +405,7 @@ type startOptions struct {
 }
 
 func runStart(ctx context.Context, opts *startOptions) error {
-	startedAt := time.Now()
+	startedAt := getNow()
 	if opts.startTimeOverride != "" {
 		var err error
 		startedAt, err = parseTime(startedAt, opts.startTimeOverride)
@@ -443,7 +443,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 
 		if opts.startTimeOverride == "" {
 			// Don't count the time interactively selecting the task.
-			startedAt = time.Now()
+			startedAt = getNow()
 		}
 	case opts.continueID != "":
 		var err error
@@ -591,7 +591,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 				)
 			}
 		case <-ctx.Done():
-			now := time.Now()
+			now := getNow()
 
 			ctx, cancel := xcontext.KeepAlive(ctx, 10*time.Second)
 			defer cancel()
@@ -699,7 +699,7 @@ type newEntryOptions struct {
 }
 
 func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
-	now := time.Now()
+	now := getNow()
 	startTime, err := parseTime(now, opts.startTime)
 	if err != nil {
 		return fmt.Errorf("start time: %v", err)
@@ -804,7 +804,7 @@ type editEntryOptions struct {
 }
 
 func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) error {
-	now := time.Now()
+	now := getNow()
 
 	entryID, err := uuid.Parse(opts.entryID)
 	if err != nil {
@@ -932,7 +932,7 @@ func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query string) error {
-	now := time.Now()
+	now := getNow()
 
 	db, err := g.open(ctx)
 	if err != nil {
@@ -1107,7 +1107,7 @@ func newStopCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStop(ctx context.Context, g *globalConfig) (err error) {
-	now := time.Now().UTC()
+	now := getNow()
 
 	db, err := g.open(ctx)
 	if err != nil {

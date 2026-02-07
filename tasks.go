@@ -251,7 +251,7 @@ func newTaskShowCommand(g *globalConfig) *cobra.Command {
 }
 
 func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, format outputFormat) (err error) {
-	now := time.Now()
+	now := getNow()
 	taskID, err := uuid.Parse(taskIDString)
 	if err != nil {
 		return err
@@ -274,7 +274,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, form
 	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_by_task.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":       time.Now().UTC(),
+			":now":       getNow().UTC().String(),
 			":task_uuid": taskID.String(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {

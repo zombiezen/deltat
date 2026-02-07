@@ -26,6 +26,15 @@ import (
 	"zombiezen.com/go/gregorian"
 )
 
+var testTime time.Time
+
+func getNow() time.Time {
+	if !testTime.IsZero() {
+		return testTime.Local()
+	}
+	return time.Now()
+}
+
 // parseDate parses a wide variety of date formats into a date
 // based on the current time and location.
 // parseDate is intended to operate on human input,

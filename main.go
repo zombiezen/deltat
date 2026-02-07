@@ -169,7 +169,7 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	}
 	defer closeConn(ctx, db)
 
-	now := time.Now().UTC()
+	now := getNow()
 	hasAny := false
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{

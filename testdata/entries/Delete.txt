@@ -1,5 +1,4 @@
 env DELTAT_DB=$PWD/foo.sqlite
-env TZ=UTC0
 
 deltat entry new --description 'First' 8:00a 8:30a
 deltat entry new --description 'Second' 8:45a 8:55a

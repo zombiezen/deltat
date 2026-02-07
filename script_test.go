@@ -17,6 +17,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"iter"
 	"os"
@@ -86,6 +87,14 @@ func runScriptTests(t *testing.T, pattern string) {
 		},
 	}, readCmd)
 
+	engine.Cmds["sleep"] = script.Command(script.CmdUsage{
+		Summary: "advance the test time by a specified duration",
+		Args:    "duration",
+		Detail: []string{
+			"The duration must be given as a Go time.Duration string.",
+		},
+	}, sleepCmd)
+
 	engine.Cmds["tail"] = script.Command(script.CmdUsage{
 		Summary: "display the last part of a file",
 		Args:    "[-n number] [file [...]]",
@@ -101,7 +110,12 @@ func runScriptTests(t *testing.T, pattern string) {
 		30*time.Second,
 	)
 	ctx := t.Context()
-	scripttest.Test(t, ctx, engine, []string{exeModeVar + "=1"}, filepath.FromSlash(pattern))
+	testEnviron := []string{
+		exeModeVar + "=1",
+		testTimeVar + "=2026-01-01T09:00:00Z",
+		"TZ=UTC0",
+	}
+	scripttest.Test(t, ctx, engine, testEnviron, filepath.FromSlash(pattern))
 }
 
 func cutCmd(state *script.State, args ...string) (script.WaitFunc, error) {
@@ -259,6 +273,28 @@ func readCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 	return nil, nil
 }
 
+func sleepCmd(state *script.State, args ...string) (script.WaitFunc, error) {
+	if len(args) != 1 {
+		return nil, script.ErrUsage
+	}
+
+	d, err := time.ParseDuration(args[0])
+	if err != nil {
+		return nil, err
+	}
+
+	s, _ := state.LookupEnv(testTimeVar)
+	testTime, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", testTimeVar, err)
+	}
+	if err := state.Setenv(testTimeVar, testTime.Add(d).UTC().Format(time.RFC3339Nano)); err != nil {
+		return nil, err
+	}
+
+	return nil, nil
+}
+
 func catFiles(paths iter.Seq[string]) (string, error) {
 	sb := new(strings.Builder)
 	for path := range paths {
@@ -283,10 +319,21 @@ func splitLines(s string) []string {
 	return lines
 }
 
-const exeModeVar = "DELTAT_SCRIPTTEST"
+const (
+	exeModeVar  = "DELTAT_SCRIPTTEST"
+	testTimeVar = "DELTAT_TESTTIME"
+)
 
 func TestMain(m *testing.M) {
 	if os.Getenv(exeModeVar) == "1" {
+		if s := os.Getenv(testTimeVar); s != "" {
+			t, err := time.Parse(time.RFC3339Nano, s)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "%s incorrect: %v\n", testTimeVar, err)
+				os.Exit(1)
+			}
+			testTime = t
+		}
 		main()
 	} else {
 		m.Run()
