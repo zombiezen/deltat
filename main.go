@@ -338,7 +338,9 @@ var (
 
 // writeFZFActionWithArgument writes "action(...)" to sb with an acceptable delimiter.
 // writeFZFActionWithArgument returns an error if arg cannot be escaped properly.
-// See the "ACTION ARGUMENT" section of `fzf --man` for more details.
+// See the ["ACTION ARGUMENT" section] of `fzf --man` for more details.
+//
+// ["ACTION ARGUMENT" section]: https://manpages.debian.org/trixie/fzf/fzf.1.en.html#ACTION_ARGUMENT
 func writeFZFActionWithArgument(sb *strings.Builder, action, arg string) error {
 	const delims = "()[]{}<>~~!!@@##$$%%&&**;;//||"
 	for i := 0; i+1 < len(delims); i += 2 {
