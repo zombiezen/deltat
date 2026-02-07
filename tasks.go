@@ -58,6 +58,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 		newTaskDeleteCommand(g),
 		newTaskEditCommand(g),
 		newTaskListCommand(g),
+		newTaskMergeCommand(g),
 		newTaskNewCommand(g),
 		newTaskSelectCommand(g),
 		newTaskShowCommand(g),
@@ -611,6 +612,83 @@ func taskSelectItemString(t *task) string {
 	sb.WriteString(t.ID.String())
 	sb.WriteString(")")
 	return sb.String()
+}
+
+func newTaskMergeCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "merge [flags] OLD_ID [...] TARGET_ID",
+		Short:         "Merge tasks",
+		Long:          "Merge the tasks, leaving the final one with all the entries and labels of the others.",
+		Args:          cobra.MinimumNArgs(2),
+		SilenceErrors: true,
+		SilenceUsage:  true,
+	}
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runTaskMerge(cmd.Context(), g, args[len(args)-1], args[:len(args)-1])
+	}
+	return c
+}
+
+func runTaskMerge(ctx context.Context, g *globalConfig, target string, old []string) error {
+	targetID, parseTargetError := uuid.Parse(target)
+	oldIDs, parseOldError := parseUUIDs(old)
+	if err := errors.Join(parseOldError, parseTargetError); err != nil {
+		return err
+	}
+	for i, id := range oldIDs {
+		if slices.Contains(oldIDs[i+1:], id) || id == targetID {
+			return fmt.Errorf("%v repeated", id)
+		}
+	}
+
+	db, err := g.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer closeConn(ctx, db)
+	endFn, err := sqlitex.ImmediateTransaction(db)
+	if err != nil {
+		return err
+	}
+	defer endFn(&err)
+
+	if err := verifyTaskExists(db, targetID); err != nil {
+		return err
+	}
+
+	for _, oldID := range oldIDs {
+		if err := verifyTaskExists(db, oldID); err != nil {
+			return err
+		}
+		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/copy_labels.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":source_task_uuid": oldID.String(),
+				":target_task_uuid": targetID.String(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("copy labels from task %v to %v: %v", oldID, targetID, err)
+		}
+		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/replace_task.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":old_task_uuid": oldID.String(),
+				":new_task_uuid": targetID.String(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("changes entries from task %v to %v: %v", oldID, targetID, err)
+		}
+		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/delete.sql", &sqlitex.ExecOptions{
+			Named: map[string]any{
+				":uuid": oldID.String(),
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("delete task %v: %v", oldID, err)
+		}
+	}
+
+	return nil
 }
 
 func newTaskDeleteCommand(g *globalConfig) *cobra.Command {

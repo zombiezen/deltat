@@ -1,0 +1,47 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+# Create first task.
+deltat task new --label=bar Foo
+sleep 1s
+
+# Get first task ID.
+deltat task list --format=csv
+tail -n+2
+head -n1
+cut -d , -f 1
+read TASK_ID1
+
+# Create second task.
+deltat task new --label=quux Baz
+sleep 1s
+
+# Get second task ID.
+deltat task list --format=csv
+tail -n+2
+head -n1
+cut -d , -f 1
+read TASK_ID2
+
+# Create entries.
+deltat entry new --task=$TASK_ID1 7:00a 7:15a
+deltat entry new --task=$TASK_ID2 7:30a 7:45a
+
+# Merge tasks.
+deltat task merge $TASK_ID2 $TASK_ID1
+
+# List tasks.
+deltat task list --format=csv
+stdout Foo
+stdout $TASK_ID1
+stdout bar,quux|quux,bar
+! stdout Baz
+! stdout $TASK_ID2
+
+# List entries.
+deltat timesheet --format=csv
+stdout Foo
+stdout $TASK_ID1
+stdout 07:00.*,.*07:15
+stdout 07:30.*,.*07:45
+! stdout Baz
+! stdout $TASK_ID2
