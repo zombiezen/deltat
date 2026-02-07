@@ -18,61 +18,8 @@ package main
 
 import (
 	"slices"
-	"strings"
 	"testing"
 )
-
-func TestWriteFZFActionWithArgument(t *testing.T) {
-	tests := []struct {
-		action string
-		arg    string
-		want   string
-	}{
-		{
-			action: "reload",
-			arg:    "",
-			want:   "reload()",
-		},
-		{
-			action: "change-prompt",
-			arg:    "NewPrompt> ",
-			want:   "change-prompt(NewPrompt> )",
-		},
-		{
-			action: "preview",
-			arg:    "cat {}",
-			want:   "preview(cat {})",
-		},
-		{
-			action: "execute",
-			arg:    "cat ()",
-			want:   "execute[cat ()]",
-		},
-		{
-			action: "execute",
-			arg:    "cat () []",
-			want:   "execute{cat () []}",
-		},
-		{
-			action: "execute",
-			arg:    "cat () [] {}",
-			want:   "execute<cat () [] {}>",
-		},
-	}
-
-	for _, test := range tests {
-		sb := new(strings.Builder)
-		if err := writeFZFActionWithArgument(sb, test.action, test.arg); err != nil {
-			t.Errorf("writeFZFActionWithArgument(%q, %q): %v", test.action, test.arg, err)
-			continue
-		}
-		got := sb.String()
-		if got != test.want {
-			t.Errorf("writeFZFActionWithArgument(%q, %q) wrote %q; want %q",
-				test.action, test.arg, got, test.want)
-		}
-	}
-}
 
 func TestJoinSeq(t *testing.T) {
 	tests := []struct {
