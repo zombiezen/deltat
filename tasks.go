@@ -523,17 +523,17 @@ func runTaskSelectReload(ctx context.Context, g *globalConfig) error {
 	}
 	defer closeConn(ctx, db)
 
-	sb := new(strings.Builder)
-	err = listTasks(db, func(t *task) bool {
-		writeTaskSelectItem(sb, t)
-		sb.WriteByte(0)
-		return true
+	var queryError error
+	err = writeFZFItems(ctx, os.Stdout, func(yield func(string) bool) {
+		queryError = listTasks(db, func(t *task) bool {
+			return yield(taskSelectItemString(t))
+		})
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stdout.WriteString(sb.String()); err != nil {
-		return err
+	if queryError != nil {
+		return queryError
 	}
 	return nil
 }
@@ -575,9 +575,7 @@ func selectTask(ctx context.Context, db *sqlite.Conn, opts *selectTaskOptions) (
 
 	var rows []string
 	err := listTasks(db, func(t *task) bool {
-		item := new(strings.Builder)
-		writeTaskSelectItem(item, t)
-		rows = append(rows, item.String())
+		rows = append(rows, taskSelectItemString(t))
 		return true
 	})
 	if err != nil {
@@ -591,7 +589,8 @@ func selectTask(ctx context.Context, db *sqlite.Conn, opts *selectTaskOptions) (
 	return parseUUIDs(output)
 }
 
-func writeTaskSelectItem(sb *strings.Builder, t *task) {
+func taskSelectItemString(t *task) string {
+	sb := new(strings.Builder)
 	sb.WriteString(t.ID.String())
 	sb.WriteString("\n")
 	sb.WriteString(plainTaskDescription(t.Description, false))
@@ -604,6 +603,7 @@ func writeTaskSelectItem(sb *strings.Builder, t *task) {
 	sb.WriteString(" (")
 	sb.WriteString(t.ID.String())
 	sb.WriteString(")")
+	return sb.String()
 }
 
 func newTaskDeleteCommand(g *globalConfig) *cobra.Command {

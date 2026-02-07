@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"os/exec"
@@ -116,19 +117,7 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 			close(done)
 		}()
 
-		var buf []byte
-		for item := range items {
-			if strings.Contains(item, "\x00") {
-				log.Warnf(ctx, "fzf: invalid item %q", item)
-				continue
-			}
-			buf = buf[:0]
-			buf = append(buf, item...)
-			buf = append(buf, 0)
-			if _, err := stdin.Write(buf); err != nil {
-				return
-			}
-		}
+		_ = writeFZFItems(ctx, stdin, items)
 	}()
 
 	output, err := c.Output()
@@ -159,6 +148,23 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 	}
 	output = bytes.TrimSuffix(output, []byte{0})
 	return strings.Split(string(output), "\x00"), err
+}
+
+func writeFZFItems(ctx context.Context, w io.Writer, items iter.Seq[string]) error {
+	var buf []byte
+	for item := range items {
+		if strings.IndexByte(item, 0) != -1 {
+			log.Warnf(ctx, "fzf: invalid item %q", item)
+			continue
+		}
+		buf = buf[:0]
+		buf = append(buf, item...)
+		buf = append(buf, 0)
+		if _, err := w.Write(buf); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 var (
