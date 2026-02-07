@@ -68,6 +68,8 @@ func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
 //go:embed docs/deltat.txt
 var rootCommandHelp string
 
+var versionString string
+
 func main() {
 	rootCommand := &cobra.Command{
 		Use:           "deltat",
@@ -75,6 +77,7 @@ func main() {
 		Long:          rootCommandHelp,
 		SilenceErrors: true,
 		SilenceUsage:  true,
+		Version:       versionString,
 	}
 
 	g := new(globalConfig)

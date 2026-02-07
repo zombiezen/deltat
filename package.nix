@@ -52,7 +52,7 @@ in
 
     subPackages = ["."];
     goSum = builtins.readFile ./go.sum;
-    ldflags = ["-s" "-w"];
+    ldflags = ["-s" "-w" "-X main.versionString=${version}"];
 
     nativeBuildInputs = [
       installShellFiles
