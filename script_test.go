@@ -75,6 +75,11 @@ func runScriptTests(t *testing.T, pattern string) {
 		Args:    "-f list [-d delim] [file [...]]",
 	}, cutCmd)
 
+	engine.Cmds["head"] = script.Command(script.CmdUsage{
+		Summary: "display the first part of a file",
+		Args:    "[-n number] [file [...]]",
+	}, headCmd)
+
 	engine.Cmds["read"] = script.Command(script.CmdUsage{
 		Summary: "read stdout or a file into variables",
 		Args:    "[--file path] name [...]",
@@ -177,6 +182,46 @@ func cutCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 	}
 	return func(state *script.State) (stdout string, stderr string, err error) {
 		return output.String(), "", nil
+	}, nil
+}
+
+func headCmd(state *script.State, args ...string) (script.WaitFunc, error) {
+	f := pflag.NewFlagSet("head", pflag.ContinueOnError)
+	linesArg := f.IntP("lines", "n", 10, "print `count` lines")
+	f.SetOutput(io.Discard)
+	if err := f.Parse(args); err != nil {
+		return nil, err
+	}
+	args = f.Args()
+
+	var input string
+	if len(args) == 0 {
+		input = state.Stdout()
+	} else {
+		var err error
+		input, err = catFiles(func(yield func(string) bool) {
+			for _, arg := range args {
+				if !yield(state.Path(arg)) {
+					return
+				}
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	lines := splitLines(input)
+	switch {
+	case *linesArg <= 0:
+		lines = nil
+	case *linesArg < len(lines):
+		lines = lines[:*linesArg]
+	}
+	output := strings.Join(lines, "")
+
+	return func(state *script.State) (stdout string, stderr string, err error) {
+		return output, "", nil
 	}, nil
 }
 
