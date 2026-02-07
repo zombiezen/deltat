@@ -115,7 +115,7 @@ func cutCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 	args = f.Args()
 
 	if *fieldsString == "" {
-		return nil, new(script.UsageError)
+		return nil, script.ErrUsage
 	}
 	fields := strings.FieldsFunc(*fieldsString, func(c rune) bool {
 		return c == ',' || c == ' ' || c == '\t'
@@ -177,7 +177,7 @@ func tailCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 
 	startLine, err := strconv.Atoi(*linesArg)
 	if err != nil {
-		return nil, new(script.UsageError)
+		return nil, script.ErrUsage
 	}
 	if !strings.HasPrefix(*linesArg, "+") && !strings.HasPrefix(*linesArg, "-") {
 		startLine = -startLine
@@ -227,7 +227,7 @@ func readCmd(state *script.State, args ...string) (script.WaitFunc, error) {
 	args = f.Args()
 
 	if len(args) < 1 {
-		return nil, new(script.UsageError)
+		return nil, script.ErrUsage
 	}
 	var input string
 	if *path == "" {
