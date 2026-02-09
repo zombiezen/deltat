@@ -355,10 +355,10 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, form
 					endTimeString,
 				)
 			}
+		}
 
-			if _, err := buf.WriteTo(os.Stdout); err != nil {
-				return err
-			}
+		if _, err := buf.WriteTo(os.Stdout); err != nil {
+			return err
 		}
 
 	case csvOutputFormat:
