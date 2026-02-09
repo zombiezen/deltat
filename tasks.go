@@ -317,7 +317,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, form
 		}
 
 		if len(t.Entries) == 0 {
-			buf.WriteString("0 entries")
+			buf.WriteString("0 entries\n")
 		} else {
 			var total time.Duration
 			for _, e := range t.Entries {
