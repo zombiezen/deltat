@@ -415,7 +415,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	startedAt := getNow()
 	if opts.startTimeOverride != "" {
 		var err error
-		startedAt, err = parseTime(startedAt, opts.startTimeOverride)
+		startedAt, err = parseTime(startedAt, opts.startTimeOverride, false)
 		if err != nil {
 			return fmt.Errorf("start time: %v", err)
 		}
@@ -466,7 +466,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			scheduledEndTime = startedAt.Add(d)
 		} else {
 			var err error
-			scheduledEndTime, err = parseTime(startedAt, opts.endTime)
+			scheduledEndTime, err = parseTime(startedAt, opts.endTime, false)
 			if err != nil {
 				return fmt.Errorf("parse end time: %v", err)
 			}
@@ -707,11 +707,11 @@ type newEntryOptions struct {
 
 func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	now := getNow()
-	startTime, err := parseTime(now, opts.startTime)
+	startTime, err := parseTime(now, opts.startTime, false)
 	if err != nil {
 		return fmt.Errorf("start time: %v", err)
 	}
-	endTime, err := parseTime(now, opts.endTime)
+	endTime, err := parseTime(now, opts.endTime, false)
 	if err != nil {
 		return fmt.Errorf("end time: %v", err)
 	}
@@ -820,7 +820,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	var startTime time.Time
 	if opts.startTime != "" {
 		var err error
-		startTime, err = parseTime(now, opts.startTime)
+		startTime, err = parseTime(now, opts.startTime, false)
 		if err != nil {
 			return fmt.Errorf("start time: %v", err)
 		}
@@ -828,7 +828,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	var endTime time.Time
 	if opts.endTime != "" {
 		var err error
-		endTime, err = parseTime(now, opts.endTime)
+		endTime, err = parseTime(now, opts.endTime, false)
 		if err != nil {
 			return fmt.Errorf("end time: %v", err)
 		}

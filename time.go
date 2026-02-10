@@ -132,7 +132,7 @@ func newStrictDate(year int, month time.Month, day int) (gregorian.Date, error) 
 // based on the current time and location.
 // parseTime is intended to operate on human input,
 // and so is fairly loose in its interpretation.
-func parseTime(now time.Time, s string) (time.Time, error) {
+func parseTime(now time.Time, s string, dateRequired bool) (time.Time, error) {
 	trimmed := strings.TrimLeftFunc(s, unicode.IsSpace)
 	var datePart, timePart string
 	if len(trimmed) > 0 && isLetter(trimmed[0]) {
@@ -167,6 +167,9 @@ func parseTime(now time.Time, s string) (time.Time, error) {
 	datePart = strings.TrimSpace(datePart)
 	var d gregorian.Date
 	if datePart == "" {
+		if dateRequired {
+			return time.Time{}, fmt.Errorf("parse time %q: missing date", s)
+		}
 		d = gregorian.NewDate(now.Year(), now.Month(), now.Day())
 	} else {
 		var err error
