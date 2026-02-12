@@ -413,9 +413,10 @@ type startOptions struct {
 
 func runStart(ctx context.Context, opts *startOptions) error {
 	startedAt := getNow()
+	entryStartTime := startedAt
 	if opts.startTimeOverride != "" {
 		var err error
-		startedAt, err = parseTime(startedAt, opts.startTimeOverride, false)
+		entryStartTime, err = parseTime(startedAt, opts.startTimeOverride, false)
 		if err != nil {
 			return fmt.Errorf("start time: %v", err)
 		}
@@ -448,9 +449,10 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 		taskID = taskIDs[0]
 
+		startedAt = getNow()
 		if opts.startTimeOverride == "" {
 			// Don't count the time interactively selecting the task.
-			startedAt = getNow()
+			entryStartTime = startedAt
 		}
 	case opts.continueID != "":
 		var err error
@@ -460,20 +462,21 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 	}
 
+	// Parse end time once entryStartTime settles.
 	var scheduledEndTime time.Time
 	if opts.endTime != "" {
 		if d, err := time.ParseDuration(opts.endTime); err == nil {
-			scheduledEndTime = startedAt.Add(d)
+			scheduledEndTime = entryStartTime.Add(d)
 		} else {
 			var err error
 			scheduledEndTime, err = parseTime(startedAt, opts.endTime, false)
 			if err != nil {
 				return fmt.Errorf("parse end time: %v", err)
 			}
-			if !scheduledEndTime.After(startedAt) {
+			if !scheduledEndTime.After(entryStartTime) {
 				return fmt.Errorf("end time (%s) is before start (%s)",
 					scheduledEndTime.Format(time.RFC3339),
-					startedAt.Format(time.RFC3339),
+					entryStartTime.Format(time.RFC3339),
 				)
 			}
 		}
@@ -498,7 +501,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 				return err
 			}
 			if scheduledEndTime.IsZero() {
-				scheduledEndTime = startedAt.Add(cfg.duration)
+				scheduledEndTime = entryStartTime.Add(cfg.duration)
 			}
 			if cfg.breakDuration > 0 {
 				breakEndTime = scheduledEndTime.Add(cfg.breakDuration)
@@ -538,7 +541,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			taskDescription = task.Description
 		}
 
-		entryID, err = newEntry(db, taskID, startedAt, time.Time{}, scheduledEndTime)
+		entryID, err = newEntry(db, taskID, entryStartTime, time.Time{}, scheduledEndTime)
 		if err != nil {
 			return err
 		}
