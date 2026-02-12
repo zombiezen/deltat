@@ -188,7 +188,7 @@ func (opts *newTaskOptions) isEmpty() bool {
 func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {
 	id, err = uuid.NewV7()
 	if err != nil {
-		return uuid.UUID{}, err
+		return uuid.Nil, err
 	}
 
 	defer sqlitex.Save(db)(&err)
@@ -206,11 +206,11 @@ func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {
 		},
 	})
 	if err != nil {
-		return uuid.UUID{}, err
+		return uuid.Nil, err
 	}
 	if len(opts.labels) > 0 {
 		if err := addTaskLabels(db, id, slices.Values(opts.labels)); err != nil {
-			return uuid.UUID{}, err
+			return uuid.Nil, err
 		}
 	}
 	return id, nil

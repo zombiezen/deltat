@@ -525,7 +525,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			return fmt.Errorf("already tracking %s (use deltat stop)", plainTaskDescription(activeTask, true))
 		}
 
-		if taskID == (uuid.UUID{}) {
+		if taskID == uuid.Nil {
 			taskID, err = newTask(db, &opts.newTaskOptions)
 			if err != nil {
 				return err
@@ -739,7 +739,7 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	}
 	defer endFn(&err)
 
-	if taskID == (uuid.UUID{}) {
+	if taskID == uuid.Nil {
 		var err error
 		taskID, err = newTask(db, &opts.newTaskOptions)
 		if err != nil {
@@ -778,7 +778,7 @@ func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime, scheduledEn
 		},
 	})
 	if err != nil {
-		return uuid.UUID{}, fmt.Errorf("create entry: %v", err)
+		return uuid.Nil, fmt.Errorf("create entry: %v", err)
 	}
 	return entryID, nil
 }
