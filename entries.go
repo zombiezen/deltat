@@ -870,8 +870,24 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 		return err
 	}
 
+	if err := updateEntryTimes(db, entryID, startTime, opts.startTime != "", endTime, opts.endTime != ""); err != nil {
+		return err
+	}
+
+	if opts.taskID != "" {
+		if err := updateEntryTaskID(db, entryID, taskID); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, changeStart bool, endTime time.Time, changeEnd bool) (err error) {
+	defer sqlitex.Save(db)(&err)
+
 	switch {
-	case opts.startTime != "" && opts.endTime == "":
+	case changeStart && !changeEnd:
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":uuid": entryID.String(),
@@ -881,7 +897,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 		if err != nil {
 			return fmt.Errorf("set start time: %v", err)
 		}
-	case opts.startTime == "" && opts.endTime != "":
+	case !changeStart && changeEnd:
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_end_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":uuid": entryID.String(),
@@ -891,7 +907,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 		if err != nil {
 			return fmt.Errorf("set end time: %v", err)
 		}
-	case opts.startTime != "" && opts.endTime != "":
+	case changeStart && changeEnd:
 		setEndStmt, err := sqlitex.PrepareTransientFS(db, sqlFiles(), "entries/set_end_time.sql")
 		if err != nil {
 			return err
@@ -915,24 +931,27 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 			return fmt.Errorf("set start time: %v", err)
 		}
 
-		setEndStmt.SetText(":time", endTime.UTC().Format(time.RFC3339))
-		if _, err := setEndStmt.Step(); err != nil {
-			return fmt.Errorf("set end time: %v", err)
+		if !endTime.IsZero() {
+			setEndStmt.SetText(":time", endTime.UTC().Format(time.RFC3339))
+			if _, err := setEndStmt.Step(); err != nil {
+				return fmt.Errorf("set end time: %v", err)
+			}
 		}
 	}
 
-	if opts.taskID != "" {
-		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_task.sql", &sqlitex.ExecOptions{
-			Named: map[string]any{
-				":uuid":      entryID.String(),
-				":task_uuid": taskID.String(),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("set task: %v", err)
-		}
-	}
+	return nil
+}
 
+func updateEntryTaskID(db *sqlite.Conn, entryID, taskID uuid.UUID) error {
+	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_task.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":uuid":      entryID.String(),
+			":task_uuid": taskID.String(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set task: %v", err)
+	}
 	return nil
 }
 
