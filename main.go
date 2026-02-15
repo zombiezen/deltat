@@ -135,7 +135,7 @@ func newShellCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "shell",
 		Short:         "SQLite shell",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Hidden:        true,
@@ -162,7 +162,7 @@ func newStatusCommand(g *globalConfig) *cobra.Command {
 		GroupID:       "basic",
 		Use:           "status",
 		Short:         "Show currently running task",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
@@ -316,6 +316,13 @@ func joinSeq(words iter.Seq[string], sep, conjunction string) string {
 	}
 	sb.WriteString(prev)
 	return sb.String()
+}
+
+func noArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("`%s` does not accept args, received %d", cmd.CommandPath(), len(args))
+	}
+	return nil
 }
 
 var initLogOnce sync.Once

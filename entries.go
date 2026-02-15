@@ -1141,7 +1141,7 @@ func newStopCommand(g *globalConfig) *cobra.Command {
 		GroupID:       "basic",
 		Use:           "stop",
 		Short:         "Stop the currently tracked task",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}

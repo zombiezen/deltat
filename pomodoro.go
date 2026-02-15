@@ -83,7 +83,7 @@ func newPomodoroSettingsCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "pomodoro-settings",
 		Short:         "Display or change default Pomodoro timings",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}

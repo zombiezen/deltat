@@ -48,7 +48,7 @@ func newLabelListCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "list",
 		Short:         "List all labels",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}

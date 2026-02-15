@@ -71,7 +71,7 @@ func newTaskListCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "list",
 		Short:         "List tasks",
-		Args:          cobra.NoArgs,
+		Args:          noArgs,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
