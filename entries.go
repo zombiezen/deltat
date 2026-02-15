@@ -528,9 +528,11 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			return fmt.Errorf("already tracking %s (use deltat stop)", plainTaskDescription(activeTask, true))
 		}
 
+		var prevID uuid.UUID
 		if taskID == uuid.Nil {
-			taskID, err = newTask(db, &opts.newTaskOptions)
-			if err != nil {
+			taskID = newUUIDV7(startedAt, uuid.Nil)
+			prevID = taskID
+			if err := insertTask(db, startedAt, opts.newTaskOptions.toTask(taskID)); err != nil {
 				return err
 			}
 		} else {
@@ -541,7 +543,13 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			taskDescription = task.Description
 		}
 
-		entryID, err = newEntry(db, taskID, entryStartTime, time.Time{}, scheduledEndTime)
+		entryID = newUUIDV7(startedAt, prevID)
+		err = insertEntry(db, &entry{
+			ID:               entryID,
+			StartTime:        entryStartTime,
+			ScheduledEndTime: scheduledEndTime,
+			Task:             &task{ID: taskID},
+		})
 		if err != nil {
 			return err
 		}
@@ -742,48 +750,50 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	}
 	defer endFn(&err)
 
+	var prevID uuid.UUID
 	if taskID == uuid.Nil {
-		var err error
-		taskID, err = newTask(db, &opts.newTaskOptions)
-		if err != nil {
+		taskID = newUUIDV7(now, uuid.Nil)
+		prevID = taskID
+		if err := insertTask(db, now, opts.newTaskOptions.toTask(taskID)); err != nil {
 			return err
 		}
 	}
-	if _, err := newEntry(db, taskID, startTime, endTime, time.Time{}); err != nil {
+	e := &entry{
+		ID:         newUUIDV7(now, prevID),
+		StartTime:  startTime,
+		RawEndTime: &endTime,
+		Task:       &task{ID: taskID},
+	}
+	if err := insertEntry(db, e); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func newEntry(db *sqlite.Conn, taskID uuid.UUID, startTime, endTime, scheduledEndTime time.Time) (uuid.UUID, error) {
+func insertEntry(db *sqlite.Conn, e *entry) error {
 	args := map[string]any{
-		":task_uuid":  taskID.String(),
-		":started_at": startTime.UTC().Format(time.RFC3339),
+		":uuid":       e.ID.String(),
+		":task_uuid":  e.Task.ID.String(),
+		":started_at": e.StartTime.UTC().Format(time.RFC3339),
 	}
-	if endTime.IsZero() {
+	if endTime := e.EndTime(); endTime.IsZero() {
 		args[":ended_at"] = nil
 	} else {
 		args[":ended_at"] = endTime.UTC().Format(time.RFC3339)
 	}
-	if scheduledEndTime.IsZero() {
+	if e.ScheduledEndTime.IsZero() {
 		args[":scheduled_end_time"] = nil
 	} else {
-		args[":scheduled_end_time"] = scheduledEndTime.UTC().Format(time.RFC3339)
+		args[":scheduled_end_time"] = e.ScheduledEndTime.UTC().Format(time.RFC3339)
 	}
-	var entryID uuid.UUID
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
 		Named: args,
-		ResultFunc: func(stmt *sqlite.Stmt) error {
-			var err error
-			entryID, err = uuid.Parse(stmt.GetText("uuid"))
-			return err
-		},
 	})
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("create entry: %v", err)
+		return fmt.Errorf("create entry: %v", err)
 	}
-	return entryID, nil
+	return nil
 }
 
 func newEntryEditCommand(g *globalConfig) *cobra.Command {

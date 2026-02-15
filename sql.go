@@ -91,22 +91,6 @@ func prepareConn(conn *sqlite.Conn) error {
 	if err != nil {
 		return err
 	}
-	// uuid7() -> BLOB
-	// Generate a new version 7 UUID.
-	err = conn.CreateFunction("uuid7", &sqlite.FunctionImpl{
-		NArgs:         0,
-		Deterministic: false,
-		Scalar: func(ctx sqlite.Context, args []sqlite.Value) (sqlite.Value, error) {
-			u, err := uuid.NewV7()
-			if err != nil {
-				return sqlite.Value{}, nil
-			}
-			return sqlite.BlobValue(u[:]), nil
-		},
-	})
-	if err != nil {
-		return err
-	}
 	// uuidhex(any) -> TEXT | NULL
 	// Format UUID in canonical dash-separated lower hex format.
 	// If argument is not a BLOB, it is converted to TEXT and parsing is attempted.

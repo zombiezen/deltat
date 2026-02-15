@@ -5,9 +5,9 @@ insert into "entries" (
   "end_time",
   "scheduled_end_time"
 ) values (
-  uuid7(),
+  uuid(:uuid),
   uuid(:task_uuid),
   strftime('%FT%T', :started_at),
   strftime('%FT%T', :ended_at),
   strftime('%FT%T', :scheduled_end_time)
-) returning uuidhex("uuid") as "uuid";
+);

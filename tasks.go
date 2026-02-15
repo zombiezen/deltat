@@ -158,6 +158,8 @@ func newTaskNewCommand(g *globalConfig) *cobra.Command {
 }
 
 func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err error) {
+	now := getNow()
+
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -169,7 +171,8 @@ func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err
 	}
 	defer endFn(&err)
 
-	if _, err := newTask(db, opts); err != nil {
+	t := opts.toTask(newUUIDV7(now, uuid.Nil))
+	if err := insertTask(db, now, t); err != nil {
 		return err
 	}
 
@@ -185,35 +188,32 @@ func (opts *newTaskOptions) isEmpty() bool {
 	return opts.description == "" && len(opts.labels) == 0
 }
 
-func newTask(db *sqlite.Conn, opts *newTaskOptions) (id uuid.UUID, err error) {
-	id, err = uuid.NewV7()
-	if err != nil {
-		return uuid.Nil, err
+func (opts *newTaskOptions) toTask(id uuid.UUID) *task {
+	return &task{
+		ID:          id,
+		Description: opts.description,
+		Labels:      opts.labels,
 	}
+}
 
+func insertTask(db *sqlite.Conn, now time.Time, t *task) (err error) {
 	defer sqlitex.Save(db)(&err)
-	var createdAt time.Time
-	if testTime.IsZero() {
-		createdAt = time.Unix(id.Time().UnixTime())
-	} else {
-		createdAt = getNow()
-	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/insert.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":uuid":        id.String(),
-			":description": opts.description,
-			":created_at":  createdAt.UTC().Format(time.RFC3339),
+			":uuid":        t.ID.String(),
+			":description": t.Description,
+			":created_at":  now.UTC().Format(time.RFC3339),
 		},
 	})
 	if err != nil {
-		return uuid.Nil, err
+		return err
 	}
-	if len(opts.labels) > 0 {
-		if err := addTaskLabels(db, id, slices.Values(opts.labels)); err != nil {
-			return uuid.Nil, err
+	if len(t.Labels) > 0 {
+		if err := addTaskLabels(db, t.ID, slices.Values(t.Labels)); err != nil {
+			return err
 		}
 	}
-	return id, nil
+	return nil
 }
 
 func addTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (err error) {
