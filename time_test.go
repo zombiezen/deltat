@@ -269,6 +269,42 @@ func TestParseTime(t *testing.T) {
 			hasDate: true,
 			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.UTC),
 		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06Z",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.UTC),
+		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06-08:00",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.FixedZone("-08:00", -8*60*60)),
+		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06-0800",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.FixedZone("-0800", -8*60*60)),
+		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06-08",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.FixedZone("-08", -8*60*60)),
+		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06+01:00",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.FixedZone("+01:00", 1*60*60)),
+		},
+		{
+			now:     refTime,
+			s:       "2026-01-22T19:04:06Zfoo",
+			hasDate: true,
+			err:     true,
+		},
 	}
 
 	for _, test := range tests {

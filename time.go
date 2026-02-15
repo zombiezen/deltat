@@ -183,17 +183,30 @@ func parseTime(now time.Time, s string, dateRequired bool) (time.Time, error) {
 	if timePart == "" {
 		return time.Time{}, fmt.Errorf("parse time %q: empty", s)
 	}
-	timePart, ampm := trimAMPMSuffix(timePart)
-	timeNums := strings.SplitN(timePart, ":", 3)
-	if len(timeNums) < 2 {
+	p := &stringParser{s: timePart}
+
+	h := strings.TrimSpace(p.run(func(c byte) bool { return c != ':' }))
+	if !p.consume(':') {
 		return time.Time{}, fmt.Errorf("parse time %q: missing HH:MM", s)
 	}
+	hn, err := strconv.ParseUint(h, 10, 0)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse time %q: invalid hours", s)
+	}
+
+	m := strings.TrimSpace(p.run(func(c byte) bool { return c != ':' && !isLetter(c) }))
+	mn, err := strconv.ParseUint(m, 10, 0)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse time %q: invalid minutes", s)
+	}
+	if mn >= 60 {
+		return time.Time{}, fmt.Errorf("parse time %q: minutes must be in range [0,59]", s)
+	}
+
 	sn := 0
-	if len(timeNums) == 3 {
-		if strings.Contains(timeNums[2], ":") {
-			return time.Time{}, fmt.Errorf("parse time %q: too many time parts", s)
-		}
-		n, err := strconv.ParseUint(strings.TrimSpace(timeNums[2]), 10, 0)
+	if p.consume(':') {
+		s := strings.TrimSpace(p.run(func(c byte) bool { return c != '-' && c != '+' && c != ':' && !isLetter(c) }))
+		n, err := strconv.ParseUint(s, 10, 0)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("parse time %q: invalid seconds", s)
 		}
@@ -203,12 +216,7 @@ func parseTime(now time.Time, s string, dateRequired bool) (time.Time, error) {
 		sn = int(n)
 	}
 
-	h := strings.TrimSpace(timeNums[0])
-	m := strings.TrimSpace(timeNums[1])
-	hn, err := strconv.ParseUint(h, 10, 0)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse time %q: invalid hours", s)
-	}
+	ampm := parseAMPM(p)
 	switch {
 	case ampm != 0 && !(1 <= hn || hn <= 12):
 		return time.Time{}, fmt.Errorf("parse time %q: hours must be in range [1,12]", s)
@@ -219,36 +227,67 @@ func parseTime(now time.Time, s string, dateRequired bool) (time.Time, error) {
 	case ampm > 0 && hn < 12:
 		hn += 12
 	}
-	mn, err := strconv.ParseUint(m, 10, 0)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse time %q: invalid minutes", s)
-	}
-	if mn >= 60 {
-		return time.Time{}, fmt.Errorf("parse time %q: minutes must be in range [0,59]", s)
-	}
+	p.skipSpace()
 
-	return time.Date(d.Year(), d.Month(), d.Day(), int(hn), int(mn), sn, 0, now.Location()), nil
-}
-
-func trimAMPMSuffix(s string) (string, int) {
-	if len(s) == 0 {
-		return s, 0
-	}
-	n := 1
-	if len(s) >= 2 {
-		if c := s[len(s)-1]; c == 'm' || c == 'M' {
-			n = 2
+	loc := now.Location()
+	if p.consume('Z') {
+		loc = time.UTC
+	} else {
+		orig := p.s
+		if sign, hasTZ := p.consumeAny("-+"); hasTZ {
+			var offset [4]byte
+			var ok bool
+			offset[0], ok = p.consumeAny(digits)
+			if !ok {
+				return time.Time{}, fmt.Errorf("parse time %q: invalid time offset", s)
+			}
+			offset[1], ok = p.consumeAny(digits)
+			if !ok {
+				return time.Time{}, fmt.Errorf("parse time %q: invalid time offset", s)
+			}
+			hasColon := p.consume(':')
+			offset[2], ok = p.consumeAny(digits)
+			switch {
+			case ok:
+				offset[3], ok = p.consumeAny(digits)
+				if !ok {
+					return time.Time{}, fmt.Errorf("parse time %q: invalid time offset", s)
+				}
+			case !ok && hasColon:
+				return time.Time{}, fmt.Errorf("parse time %q: invalid time offset", s)
+			default:
+				offset[2] = '0'
+				offset[3] = '0'
+			}
+			offsetMins := int(offset[0]-'0')*10*60 +
+				int(offset[1]-'0')*60 +
+				int(offset[2]-'0')*10 +
+				int(offset[3]-'0')
+			if sign == '-' {
+				offsetMins = -offsetMins
+			}
+			loc = time.FixedZone(orig[:len(orig)-len(p.s)], offsetMins*60)
 		}
 	}
-	switch s[len(s)-n] {
-	case 'a', 'A':
-		s = strings.TrimRightFunc(s[:len(s)-n], unicode.IsSpace)
-		return s, -1
-	case 'p', 'P':
-		s = strings.TrimRightFunc(s[:len(s)-n], unicode.IsSpace)
-		return s, 1
+
+	p.skipSpace()
+	if p.s != "" {
+		return time.Time{}, fmt.Errorf("parse time %q: trailing characters", s)
 	}
-	return s, 0
+
+	return time.Date(d.Year(), d.Month(), d.Day(), int(hn), int(mn), sn, 0, loc), nil
+}
+
+func parseAMPM(p *stringParser) int {
+	if _, ok := p.consumeAny("aA"); ok {
+		p.consumeAny("mM")
+		return -1
+	}
+	if _, ok := p.consumeAny("pP"); ok {
+		p.consumeAny("mM")
+		return 1
+	}
+	return 0
 }
 
 func formatDuration(d time.Duration) string {
@@ -319,9 +358,20 @@ func (p *stringParser) consume(c byte) bool {
 	return true
 }
 
+func (p *stringParser) consumeAny(charset string) (c byte, ok bool) {
+	if len(p.s) == 0 || strings.IndexByte(charset, p.s[0]) == -1 {
+		return 0, false
+	}
+	c = p.s[0]
+	p.s = p.s[1:]
+	return c, true
+}
+
 func (p *stringParser) skipSpace() {
 	p.s = strings.TrimLeftFunc(p.s, unicode.IsSpace)
 }
+
+const digits = "0123456789"
 
 func isDigit(c byte) bool {
 	return '0' <= c && c <= '9'
