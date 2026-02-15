@@ -70,6 +70,7 @@ func newEntryCommand(g *globalConfig) *cobra.Command {
 	c.AddCommand(
 		newEntryDeleteCommand(g),
 		newEntryEditCommand(g),
+		newEntryImportCommand(g),
 		newEntryNewCommand(g),
 		newEntrySelectCommand(g),
 	)

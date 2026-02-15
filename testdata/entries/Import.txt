@@ -1,0 +1,17 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat entry import input.csv
+
+deltat timesheet --all --format=plain
+stdout '^# 2026-01-01$'
+stdout '^-\s*6:05AM\s*–\s*6:15AM:\s*Foo$'
+stdout '^-\s*6:20AM\s*–\s*6:27AM:\s*Foo$'
+stdout '^-\s*7:30AM\s*–\s*7:40AM:\s*Bar$'
+stdout '^\|\s*Foo\s*\|\s*0:17:00\s*\|$'
+stdout '^\|\s*Bar\s*\|\s*0:10:00\s*\|$'
+
+-- input.csv --
+Description,Start Time,End Time
+Foo,2026-01-01T06:05:00Z,2026-01-01T06:15:00Z
+Foo,2026-01-01T06:20:00Z,2026-01-01T06:27:00Z
+Bar,2026-01-01T07:30:00Z,2026-01-01T07:40:00Z

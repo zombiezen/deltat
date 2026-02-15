@@ -1,0 +1,18 @@
+Import a CSV file of time entries.
+
+If no file is given, standard input will be read.
+
+The first row of the CSV file is used as column headers.
+The CSV file must include a "Start Time" column, an "End Time" column,
+and at least one of "Task ID" or "Task Description" columns.
+Optionally, the CSV file may include an "ID" column.
+If the "ID" column for a row matches an existing entry,
+then that entry will be updated in-place.
+If the "Task ID" column is present, is non-empty for a row,
+and matches an existing task's ID, then the entry will be associated with that task.
+Otherwise, a new task will be created with the description in the "Task Description" column.
+Tasks without IDs and identical descriptions will be treated as the same task.
+
+The "Start Time" column can also be named "Start" or "start_time".
+The "End Time" column can also be named "End" or "end_time".
+The "Task Description" column can also be named "Description".

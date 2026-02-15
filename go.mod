@@ -7,7 +7,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.9
-	golang.org/x/sys v0.40.0
+	golang.org/x/sys v0.41.0
+	golang.org/x/term v0.40.0
 	rsc.io/script v0.0.2
 	zombiezen.com/go/gregorian v0.1.0
 	zombiezen.com/go/log v1.1.0
