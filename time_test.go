@@ -119,11 +119,11 @@ func TestParseTime(t *testing.T) {
 	refTime := time.Date(2026, time.January, 23, 8, 30, 0, 0, refLocation)
 
 	tests := []struct {
-		now          time.Time
-		s            string
-		dateRequired bool
-		want         time.Time
-		err          bool
+		now     time.Time
+		s       string
+		hasDate bool
+		want    time.Time
+		err     bool
 	}{
 		{
 			now: refTime,
@@ -139,12 +139,6 @@ func TestParseTime(t *testing.T) {
 			now:  refTime,
 			s:    "00:00:00",
 			want: time.Date(2026, time.January, 23, 0, 0, 0, 0, refLocation),
-		},
-		{
-			now:          refTime,
-			s:            "00:00:00",
-			dateRequired: true,
-			err:          true,
 		},
 		{
 			now:  refTime,
@@ -197,12 +191,6 @@ func TestParseTime(t *testing.T) {
 			want: time.Date(2026, time.January, 23, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:          refTime,
-			s:            "19:04",
-			dateRequired: true,
-			err:          true,
-		},
-		{
 			now:  refTime,
 			s:    "7:04p",
 			want: time.Date(2026, time.January, 23, 19, 4, 0, 0, refLocation),
@@ -228,85 +216,82 @@ func TestParseTime(t *testing.T) {
 			want: time.Date(2026, time.January, 23, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:          refTime,
-			s:            "07:04PM",
-			dateRequired: true,
-			err:          true,
+			now:     refTime,
+			s:       "Jan 22 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "Jan 22 7:04 PM",
-			want: time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "Jan22 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:          refTime,
-			s:            "Jan 22 7:04 PM",
-			dateRequired: true,
-			want:         time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "Jan 22, 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "Jan22 7:04 PM",
-			want: time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "August 22 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "Jan 22, 7:04 PM",
-			want: time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "August 22 2026 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "August 22 7:04 PM",
-			want: time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "August 22, 2026 7:04 PM",
+			hasDate: true,
+			want:    time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "August 22 2026 7:04 PM",
-			want: time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "2026-01-22T19:04",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
 		},
 		{
-			now:  refTime,
-			s:    "August 22, 2026 7:04 PM",
-			want: time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
+			now:     refTime,
+			s:       "2026-01-22T19:04:06",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, refLocation),
 		},
 		{
-			now:          refTime,
-			s:            "August 22, 2026 7:04 PM",
-			dateRequired: true,
-			want:         time.Date(2026, time.August, 22, 19, 4, 0, 0, refLocation),
-		},
-		{
-			now:  refTime,
-			s:    "2026-01-22T19:04",
-			want: time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
-		},
-		{
-			now:          refTime,
-			s:            "2026-01-22T19:04",
-			dateRequired: true,
-			want:         time.Date(2026, time.January, 22, 19, 4, 0, 0, refLocation),
-		},
-		{
-			now:  refTime,
-			s:    "2026-01-22T19:04:06",
-			want: time.Date(2026, time.January, 22, 19, 4, 6, 0, refLocation),
-		},
-		{
-			now:          refTime,
-			s:            "2026-01-22T19:04:06",
-			dateRequired: true,
-			want:         time.Date(2026, time.January, 22, 19, 4, 6, 0, refLocation),
+			now:     refTime,
+			s:       "2026-01-22T19:04:06Z",
+			hasDate: true,
+			want:    time.Date(2026, time.January, 22, 19, 4, 6, 0, time.UTC),
 		},
 	}
 
 	for _, test := range tests {
-		got, err := parseTime(test.now, test.s, test.dateRequired)
+		got, err := parseTime(test.now, test.s, false)
 		if !got.Equal(test.want) || (err != nil) != test.err {
 			if test.err {
-				t.Errorf("parseTime(%v, %q) = %v, %v; want _, <error>",
+				t.Errorf("parseTime(%v, %q, false) = %v, %v; want _, <error>",
 					test.now, test.s, got, err)
 			} else {
-				t.Errorf("parseTime(%v, %q) = %v, %v; want %v, <nil>",
+				t.Errorf("parseTime(%v, %q, false) = %v, %v; want %v, <nil>",
+					test.now, test.s, got, err, test.want)
+			}
+		}
+
+		got, err = parseTime(test.now, test.s, true)
+		if test.hasDate && !got.Equal(test.want) ||
+			!test.hasDate && !got.IsZero() ||
+			(err != nil) != (test.err || !test.hasDate) {
+			if test.err {
+				t.Errorf("parseTime(%v, %q, true) = %v, %v; want _, <error>",
+					test.now, test.s, got, err)
+			} else {
+				t.Errorf("parseTime(%v, %q, true) = %v, %v; want %v, <nil>",
 					test.now, test.s, got, err, test.want)
 			}
 		}
