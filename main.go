@@ -19,7 +19,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"errors"
 	"fmt"
 	"iter"
 	"os"
@@ -29,8 +28,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-json-experiment/json/jsontext"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
@@ -208,21 +205,6 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 		fmt.Println("Nothing running.")
 	}
 	return nil
-}
-
-func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
-	return enc.WriteToken(jsontext.String(u.String()))
-}
-
-func parseUUIDs(slice []string) (uuid.UUIDs, error) {
-	result := make(uuid.UUIDs, len(slice))
-	var resultError error
-	for i, s := range slice {
-		var err error
-		result[i], err = uuid.Parse(s)
-		resultError = errors.Join(resultError, err)
-	}
-	return result, resultError
 }
 
 // outputFormat is an enumeration of output formats for the CLI.
