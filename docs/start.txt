@@ -1,10 +1,10 @@
 Starts a new time entry.
 
-If no arguments are given (or --continue is passed), then fzf is opened
-to pick the task to associate the entry to. Ctrl-N can be pressed to
-create a new task with a description from the input box.
+If no arguments are given, then fzf is opened to pick the task
+to associate the entry to. Ctrl-N can be pressed to create a new task
+with a description from the input box.
 (To use a specific fzf binary, set the DELTAT_FZF environment variable.)
-If --continue-task is passed, then the task with that ID is used.
+If --continue is passed, then the task with that ID is used.
 Otherwise, a new task with the given flags are used.
 
 If --end is passed, then the entry will be ended at the given time

@@ -379,16 +379,14 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	opts := &startOptions{globalConfig: g}
 	c.Flags().StringSliceVar(&opts.newTaskOptions.labels, "label", nil, "comma-separated `labels` for new task")
 	c.Flags().BoolVarP(&opts.detach, "detach", "d", false, "start task without occupying terminal")
-	c.Flags().BoolVarP(&opts.continueInteractive, "continue", "c", false, "continue a previous task (using fzf to select)")
-	c.Flags().StringVar(&opts.continueID, "continue-task", "", "`ID` of a previous task to continue")
+	c.Flags().StringVarP(&opts.continueID, "continue", "c", "", "`ID` of a previous task to continue")
 	c.Flags().StringVarP(&opts.startTimeOverride, "start", "s", "", "`time` to use for the entry's start")
 	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "scheduled end `time` for task (can be a duration like \"1h5m\")")
 	c.Flags().BoolVarP(&opts.pomodoro, "pomodoro", "p", false, "run a timed session")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		switch {
-		case len(args) == 0 && opts.continueID == "":
+		if len(args) == 0 && opts.continueID == "" && opts.newTaskOptions.isEmpty() {
 			opts.continueInteractive = true
-		case len(args) > 0:
+		} else {
 			opts.newTaskOptions.description = taskDescriptionFromArgs(args)
 		}
 		var err error
