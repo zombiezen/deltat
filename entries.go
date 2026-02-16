@@ -935,6 +935,9 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		if _, err := setEndStmt.Step(); err != nil {
 			return fmt.Errorf("set end time: %v", err)
 		}
+		if err := setEndStmt.Reset(); err != nil {
+			return fmt.Errorf("set end time: %v", err)
+		}
 
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
@@ -949,6 +952,9 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		if !endTime.IsZero() {
 			setEndStmt.SetText(":time", endTime.UTC().Format(time.RFC3339))
 			if _, err := setEndStmt.Step(); err != nil {
+				return fmt.Errorf("set end time: %v", err)
+			}
+			if err := setEndStmt.Reset(); err != nil {
 				return fmt.Errorf("set end time: %v", err)
 			}
 		}
