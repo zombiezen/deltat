@@ -18,12 +18,32 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 )
+
+const uuidStringLength = 36
+
+func appendUUIDText(dst []byte, u uuid.UUID) []byte {
+	dst = slices.Grow(dst, uuidStringLength)
+	newLen := len(dst) + uuidStringLength
+	newBytes := dst[len(dst):newLen]
+	hex.Encode(newBytes[:], u[:4])
+	newBytes[8] = '-'
+	hex.Encode(newBytes[9:], u[4:6])
+	newBytes[13] = '-'
+	hex.Encode(newBytes[14:], u[6:8])
+	newBytes[18] = '-'
+	hex.Encode(newBytes[19:], u[8:10])
+	newBytes[23] = '-'
+	hex.Encode(newBytes[24:], u[10:])
+	return dst[:newLen]
+}
 
 func marshalUUIDTo(enc *jsontext.Encoder, u uuid.UUID) error {
 	return enc.WriteToken(jsontext.String(u.String()))

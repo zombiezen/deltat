@@ -175,6 +175,12 @@ func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err
 	if err := insertTask(db, now, t); err != nil {
 		return err
 	}
+	outputLine := make([]byte, 0, uuidStringLength+1)
+	outputLine = appendUUIDText(outputLine, t.ID)
+	outputLine = append(outputLine, '\n')
+	if _, err := os.Stdout.Write(outputLine); err != nil {
+		return err
+	}
 
 	return nil
 }

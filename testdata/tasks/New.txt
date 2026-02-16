@@ -1,4 +1,5 @@
 env DELTAT_DB=$PWD/foo.sqlite
 deltat task new Testing tasks
+stdout .
 deltat task list
 stdout 'Testing tasks'

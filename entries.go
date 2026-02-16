@@ -559,6 +559,13 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		return err
 	}
 
+	outputLine := make([]byte, 0, uuidStringLength+1)
+	outputLine = appendUUIDText(outputLine, entryID)
+	outputLine = append(outputLine, '\n')
+	if _, err := os.Stdout.Write(outputLine); err != nil {
+		return err
+	}
+
 	initialMessage := new(bytes.Buffer)
 	initialMessage.WriteString(plainTaskDescription(taskDescription, true))
 	initialMessage.WriteString(" started at ")
@@ -571,8 +578,8 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		initialMessage.WriteString(". Break ends at ")
 		initialMessage.WriteString(breakEndTime.Local().Format(time.Kitchen))
 	}
-	initialMessage.WriteString(".\n")
-	initialMessage.WriteTo(os.Stdout)
+	initialMessage.WriteString(".")
+	log.Infof(ctx, "%s", initialMessage.Bytes())
 	if opts.detach {
 		return nil
 	}
@@ -584,6 +591,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		case now := <-ticker.C:
 			newStartTime, newEndTime, newScheduledEndTime, err := pollEnd(db, entryID, now, scheduledEndTime)
 			if err != nil {
+				os.Stderr.WriteString("\n")
 				log.Warnf(ctx, "Read entry: %v", err)
 			}
 			if !newStartTime.IsZero() {
@@ -591,17 +599,18 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			}
 			if !newEndTime.IsZero() {
 				// Another process ended or removed the entry.
-				fmt.Printf("\nEnded at %s\n", newEndTime.Local().Format(time.Kitchen))
+				os.Stderr.WriteString("\n")
+				log.Infof(ctx, "Ended at %s", newEndTime.Local().Format(time.Kitchen))
 				return nil
 			}
 			scheduledEndTime = newScheduledEndTime
 
 			if scheduledEndTime.IsZero() {
-				fmt.Printf("\r%s elapsed", formatDuration(now.Sub(startedAt)))
+				fmt.Fprintf(os.Stderr, "\r%s elapsed", formatDuration(now.Sub(startedAt)))
 			} else {
 				// Round everything so that the formatted durations add up to the user-specified duration.
 				// Satisfies my constant need to add both numbers and have it be a whole number. 😅
-				fmt.Printf(
+				fmt.Fprintf(os.Stderr,
 					"\r%s elapsed (%s remaining)",
 					formatDuration(now.Sub(startedAt.Round(time.Second)).Round(time.Second)),
 					formatDuration(scheduledEndTime.Round(time.Second).Sub(now).Round(time.Second)),
@@ -632,7 +641,8 @@ func runStart(ctx context.Context, opts *startOptions) error {
 				return err
 			}
 
-			fmt.Printf("\nEnded at %s\n", now.Format(time.Kitchen))
+			os.Stderr.WriteString("\n")
+			log.Infof(ctx, "Ended at %s", now.Format(time.Kitchen))
 			return nil
 		}
 	}
@@ -764,6 +774,12 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 		Task:       &task{ID: taskID},
 	}
 	if err := insertEntry(db, e); err != nil {
+		return err
+	}
+	outputLine := make([]byte, 0, uuidStringLength+1)
+	outputLine = appendUUIDText(outputLine, e.ID)
+	outputLine = append(outputLine, '\n')
+	if _, err := os.Stdout.Write(outputLine); err != nil {
 		return err
 	}
 
