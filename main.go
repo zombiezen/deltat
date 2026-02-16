@@ -99,6 +99,7 @@ func main() {
 	})
 	rootCommand.AddCommand(
 		newEntryCommand(g),
+		newGenerateUUIDCommand(g),
 		newLabelCommand(g),
 		newPomodoroSettingsCommand(g),
 		newShellCommand(g),

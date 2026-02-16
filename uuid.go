@@ -17,14 +17,17 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"os"
 	"slices"
 	"time"
 
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
+	"github.com/spf13/cobra"
 )
 
 const uuidStringLength = 36
@@ -107,4 +110,35 @@ func fillUUIDV7Timestamp(u []byte, ms int64) {
 	u[3] = byte(ms >> 16)
 	u[4] = byte(ms >> 8)
 	u[5] = byte(ms)
+}
+
+func newGenerateUUIDCommand(g *globalConfig) *cobra.Command {
+	c := &cobra.Command{
+		Use:           "generate-uuid",
+		Aliases:       []string{"uuidgen"},
+		Short:         "generate UUID batch",
+		Args:          noArgs,
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		Hidden:        true,
+	}
+	n := c.Flags().IntP("count", "n", 1, "`number` of UUIDs to generate")
+	c.RunE = func(cmd *cobra.Command, args []string) error {
+		return runGenerateUUID(cmd.Context(), g, *n)
+	}
+	return c
+}
+
+func runGenerateUUID(ctx context.Context, g *globalConfig, n int) error {
+	now := getNow()
+	buf := make([]byte, 0, (uuidStringLength+1)*n)
+	var prevID uuid.UUID
+	for range n {
+		id := newUUIDV7(now, prevID)
+		buf = appendUUIDText(buf, id)
+		buf = append(buf, '\n')
+		prevID = id
+	}
+	_, err := os.Stdout.Write(buf)
+	return err
 }
