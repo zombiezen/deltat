@@ -137,12 +137,14 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 
 		e := &entry{Task: new(task)}
 		if 0 <= idColumn && idColumn < len(row) {
-			var err error
-			e.ID, err = uuid.Parse(row[idColumn])
-			if err != nil {
-				line, col := r.FieldPos(idColumn)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
-				continue
+			if s := row[idColumn]; s != "" {
+				var err error
+				e.ID, err = uuid.Parse(s)
+				if err != nil {
+					line, col := r.FieldPos(idColumn)
+					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
+					continue
+				}
 			}
 		}
 		e.StartTime, err = parseTime(now, row[startTimeColumn], true)
