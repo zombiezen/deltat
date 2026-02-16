@@ -381,7 +381,7 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	c.Flags().BoolVarP(&opts.detach, "detach", "d", false, "start task without occupying terminal")
 	c.Flags().BoolVarP(&opts.continueInteractive, "continue", "c", false, "continue a previous task (using fzf to select)")
 	c.Flags().StringVar(&opts.continueID, "continue-task", "", "`ID` of a previous task to continue")
-	c.Flags().StringVarP(&opts.startTimeOverride, "time", "t", "", "`time` to use for the entry's start")
+	c.Flags().StringVarP(&opts.startTimeOverride, "start", "s", "", "`time` to use for the entry's start")
 	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "scheduled end `time` for task (can be a duration like \"1h5m\")")
 	c.Flags().BoolVarP(&opts.pomodoro, "pomodoro", "p", false, "run a timed session")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
@@ -806,8 +806,8 @@ func newEntryEditCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	opts := new(editEntryOptions)
-	c.Flags().StringVar(&opts.startTime, "start-time", "", "start `time` of the entry")
-	c.Flags().StringVar(&opts.endTime, "end-time", "", "end `time` of the entry")
+	c.Flags().StringVarP(&opts.startTime, "start", "s", "", "start `time` of the entry")
+	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "end `time` of the entry")
 	c.Flags().StringVar(&opts.taskID, "task", "", "`ID` of the task to associate with the entry")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.entryID = args[0]
