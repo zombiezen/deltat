@@ -1,0 +1,21 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat entry import --dry-run input.csv
+stdout 'input.csv:2: new task “Foo”'
+stdout 'input.csv:2: new entry for task'
+! stdout 'input.csv:3: new task “Foo”'
+stdout 'input.csv:3: new entry for task'
+stdout 'input.csv:4: new task “Bar”'
+stdout 'input.csv:4: new entry for task'
+
+deltat task list
+! stdout .
+
+deltat timesheet --all --format=plain
+! stdout .
+
+-- input.csv --
+Description,Start Time,End Time
+Foo,2026-01-01T06:05:00Z,2026-01-01T06:15:00Z
+Foo,2026-01-01T06:20:00Z,2026-01-01T06:27:00Z
+Bar,2026-01-01T07:30:00Z,2026-01-01T07:40:00Z

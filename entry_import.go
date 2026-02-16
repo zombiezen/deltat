@@ -47,31 +47,41 @@ func newEntryImportCommand(g *globalConfig) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 	}
+	opts := &entryImportOptions{
+		input:         os.Stdin,
+		inputFileName: "<stdin>",
+	}
+	c.Flags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "preview changes to be made")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		inputFile := os.Stdin
-		inputFileName := "<stdin>"
 		if len(args) > 0 {
-			var err error
-			inputFile, err = os.Open(args[0])
+			opts.inputFileName = filepath.Base(args[0])
+
+			f, err := os.Open(args[0])
 			if err != nil {
 				return err
 			}
-			defer inputFile.Close()
-			inputFileName = filepath.Base(args[0])
+			defer f.Close()
+			opts.input = f
 		} else if term.IsTerminal(int(os.Stdin.Fd())) {
 			log.Infof(ctx, "Reading from stdin...")
 		}
 
-		return runEntryImportCSV(ctx, g, inputFileName, inputFile)
+		return runEntryImportCSV(ctx, g, opts)
 	}
 	return c
 }
 
-func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName string, input io.Reader) (err error) {
+type entryImportOptions struct {
+	input         io.Reader
+	inputFileName string
+	dryRun        bool
+}
+
+func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOptions) (err error) {
 	now := getNow()
 
-	r := csv.NewReader(input)
+	r := csv.NewReader(opts.input)
 	r.ReuseRecord = true
 
 	firstRow, err := readCSVRow(ctx, r)
@@ -94,10 +104,10 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 		return err
 	}
 	if startTimeColumn == -1 || endTimeColumn == -1 {
-		return fmt.Errorf("%s: must have Start Time and End Time columns", inputFileName)
+		return fmt.Errorf("%s: must have Start Time and End Time columns", opts.inputFileName)
 	}
 	if taskIDColumn == -1 && taskDescriptionColumn == -1 {
-		return fmt.Errorf("%s: must have either a Task ID or Description column", inputFileName)
+		return fmt.Errorf("%s: must have either a Task ID or Description column", opts.inputFileName)
 	}
 
 	db, err := g.open(ctx)
@@ -105,22 +115,32 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 		return err
 	}
 	defer closeConn(ctx, db)
-	endFn, err := sqlitex.ImmediateTransaction(db)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		// Because this operation is largely idempotent,
-		// we want to commit as much as we can,
-		// even if the overall import fails.
-		var endError error
-		endFn(&endError)
-		if err == nil {
-			err = endError
-		} else if endError != nil {
-			log.Errorf(ctx, "Commit transaction: %v", endError)
+	if opts.dryRun {
+		var rollback func()
+		rollback, err = readonlySavepoint(db)
+		if err != nil {
+			return err
 		}
-	}()
+		defer rollback()
+	} else {
+		var endFn func(*error)
+		endFn, err = sqlitex.ImmediateTransaction(db)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			// Because this operation is largely idempotent,
+			// we want to commit as much as we can,
+			// even if the overall import fails.
+			var endError error
+			endFn(&endError)
+			if err == nil {
+				err = endError
+			} else if endError != nil {
+				log.Errorf(ctx, "Commit transaction: %v", endError)
+			}
+		}()
+	}
 
 	taskMap := make(map[string]uuid.UUID)
 	var prevID uuid.UUID
@@ -142,7 +162,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 				e.ID, err = uuid.Parse(s)
 				if err != nil {
 					line, col := r.FieldPos(idColumn)
-					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
+					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 					continue
 				}
 			}
@@ -150,14 +170,14 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 		e.StartTime, err = parseTime(now, row[startTimeColumn], true)
 		if err != nil {
 			line, col := r.FieldPos(startTimeColumn)
-			resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
+			resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 			continue
 		}
 		if s := row[endTimeColumn]; s != "" {
 			endTime, err := parseTime(now, row[endTimeColumn], true)
 			if err != nil {
 				line, col := r.FieldPos(endTimeColumn)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 				continue
 			}
 			e.RawEndTime = &endTime
@@ -170,20 +190,22 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 				e.Task.ID, err = uuid.Parse(s)
 				if err != nil {
 					line, col := r.FieldPos(taskIDColumn)
-					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", inputFileName, line, col, err))
+					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 					continue
 				}
 			} else if taskDescriptionColumn < 0 {
 				line, col := r.FieldPos(taskIDColumn)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: missing task ID", inputFileName, line, col))
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: missing task ID", opts.inputFileName, line, col))
 				continue
 			}
 		}
 
+		usedTaskMap := false
 		if 0 <= taskDescriptionColumn && taskDescriptionColumn < len(row) {
 			e.Task.Description = row[taskDescriptionColumn]
 			if e.Task.Description != "" && e.Task.ID == uuid.Nil {
 				e.Task.ID = taskMap[e.Task.Description]
+				usedTaskMap = true
 			}
 		}
 
@@ -192,10 +214,31 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 			e.Task.ID = newUUIDV7(now, prevID)
 			prevID = e.Task.ID
 		}
-		if err := insertTask(db, now, e.Task); err != nil && (newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey) {
+		if opts.dryRun {
 			line, _ := r.FieldPos(0)
-			resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", inputFileName, line, err))
-			continue
+			if newTask {
+				fmt.Printf("%s:%d: new task %s (placeholder ID is %v)\n",
+					opts.inputFileName,
+					line,
+					plainTaskDescription(e.Task.Description, true),
+					e.Task.ID)
+			} else if !usedTaskMap {
+				if err := verifyTaskExists(db, e.Task.ID); isTaskNotFound(err) {
+					fmt.Printf("%s:%d: new task %s with ID %v\n",
+						opts.inputFileName,
+						line,
+						plainTaskDescription(e.Task.Description, true),
+						e.Task.ID)
+				} else if err != nil {
+					log.Warnf(ctx, "%s:%d: %v", opts.inputFileName, line, err)
+				}
+			}
+		} else {
+			if err := insertTask(db, now, e.Task); err != nil && (newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey) {
+				line, _ := r.FieldPos(0)
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
+				continue
+			}
 		}
 		if newTask && e.Task.Description != "" {
 			taskMap[e.Task.Description] = e.Task.ID
@@ -206,21 +249,42 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, inputFileName strin
 			e.ID = newUUIDV7(now, prevID)
 			prevID = e.ID
 		}
-		if err := insertEntry(db, e); err != nil {
+		if opts.dryRun {
+			line, _ := r.FieldPos(0)
+			if newEntry {
+				fmt.Printf("%s:%d: new entry for task %v\n",
+					opts.inputFileName,
+					line,
+					e.Task.ID)
+			} else if _, err := fetchEntry(db, e.ID, now); isEntryNotFound(err) {
+				fmt.Printf("%s:%d: new entry for task %v\n",
+					opts.inputFileName,
+					line,
+					e.Task.ID)
+			} else if err != nil {
+				log.Warnf(ctx, "%s:%d: %v", opts.inputFileName, line, err)
+			} else {
+				fmt.Printf("%s:%d: update entry %v for task %v\n",
+					opts.inputFileName,
+					line,
+					e.ID,
+					e.Task.ID)
+			}
+		} else if err := insertEntry(db, e); err != nil {
 			if newEntry || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey {
 				line, _ := r.FieldPos(0)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", inputFileName, line, err))
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 				continue
 			}
 
 			if err := updateEntryTimes(db, e.ID, e.StartTime, true, e.EndTime(), true); err != nil {
 				line, _ := r.FieldPos(0)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", inputFileName, line, err))
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 				// Update as many fields as possible, don't skip others.
 			}
 			if err := updateEntryTaskID(db, e.ID, e.Task.ID); err != nil {
 				line, _ := r.FieldPos(0)
-				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", inputFileName, line, err))
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 				// Update as many fields as possible, don't skip others.
 			}
 		}
