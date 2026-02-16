@@ -333,6 +333,13 @@ var monthNames = map[string]time.Month{
 	"december":  time.December,
 }
 
+func timeToSQLArg(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
 type stringParser struct {
 	s string
 }

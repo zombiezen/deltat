@@ -208,7 +208,7 @@ func insertTask(db *sqlite.Conn, now time.Time, t *task) (err error) {
 		Named: map[string]any{
 			":uuid":        t.ID.String(),
 			":description": t.Description,
-			":created_at":  now.UTC().Format(time.RFC3339),
+			":created_at":  timeToSQLArg(now),
 		},
 	})
 	if err != nil {

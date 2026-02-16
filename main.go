@@ -183,7 +183,7 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	hasAny := false
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":   now.UTC().Format(time.RFC3339),
+			":now":   timeToSQLArg(now),
 			":limit": nil,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {

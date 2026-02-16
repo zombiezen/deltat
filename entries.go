@@ -162,14 +162,14 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	totalsByLabel := make(map[string]time.Duration)
 	var lastDateHeader gregorian.Date
 	args := map[string]any{
-		":now": now.UTC().Format(time.RFC3339),
+		":now": timeToSQLArg(now),
 	}
 	if opts.all {
 		args[":min_time"] = nil
 		args[":max_time"] = nil
 	} else {
-		args[":min_time"] = minTime.UTC().Format(time.RFC3339)
-		args[":max_time"] = maxTime.UTC().Format(time.RFC3339)
+		args[":min_time"] = timeToSQLArg(minTime)
+		args[":max_time"] = timeToSQLArg(maxTime)
 	}
 	var labelsBuf []byte
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list.sql", &sqlitex.ExecOptions{
@@ -511,7 +511,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		var hasActive bool
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
-				":now":   startedAt.UTC().Format(time.RFC3339),
+				":now":   timeToSQLArg(startedAt),
 				":limit": 1,
 			},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -633,7 +633,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 				return sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop.sql", &sqlitex.ExecOptions{
 					Named: map[string]any{
 						":uuid": entryID.String(),
-						":now":  now.UTC().Format(time.RFC3339),
+						":now":  timeToSQLArg(now),
 					},
 				})
 			}()
@@ -788,19 +788,11 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 
 func insertEntry(db *sqlite.Conn, e *entry) error {
 	args := map[string]any{
-		":uuid":       e.ID.String(),
-		":task_uuid":  e.Task.ID.String(),
-		":started_at": e.StartTime.UTC().Format(time.RFC3339),
-	}
-	if endTime := e.EndTime(); endTime.IsZero() {
-		args[":ended_at"] = nil
-	} else {
-		args[":ended_at"] = endTime.UTC().Format(time.RFC3339)
-	}
-	if e.ScheduledEndTime.IsZero() {
-		args[":scheduled_end_time"] = nil
-	} else {
-		args[":scheduled_end_time"] = e.ScheduledEndTime.UTC().Format(time.RFC3339)
+		":uuid":               e.ID.String(),
+		":task_uuid":          e.Task.ID.String(),
+		":started_at":         timeToSQLArg(e.StartTime),
+		":ended_at":           timeToSQLArg(e.EndTime()),
+		":scheduled_end_time": timeToSQLArg(e.ScheduledEndTime),
 	}
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/insert.sql", &sqlitex.ExecOptions{
 		Named: args,
@@ -906,7 +898,7 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":uuid": entryID.String(),
-				":time": startTime.UTC().Format(time.RFC3339),
+				":time": timeToSQLArg(startTime),
 			},
 		})
 		if err != nil {
@@ -916,7 +908,7 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_end_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":uuid": entryID.String(),
-				":time": endTime.UTC().Format(time.RFC3339),
+				":time": timeToSQLArg(endTime),
 			},
 		})
 		if err != nil {
@@ -942,7 +934,7 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/set_start_time.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":uuid": entryID.String(),
-				":time": startTime.UTC().Format(time.RFC3339),
+				":time": timeToSQLArg(startTime),
 			},
 		})
 		if err != nil {
@@ -950,7 +942,7 @@ func updateEntryTimes(db *sqlite.Conn, entryID uuid.UUID, startTime time.Time, c
 		}
 
 		if !endTime.IsZero() {
-			setEndStmt.SetText(":time", endTime.UTC().Format(time.RFC3339))
+			setEndStmt.SetText(":time", timeToSQLArg(endTime).(string))
 			if _, err := setEndStmt.Step(); err != nil {
 				return fmt.Errorf("set end time: %v", err)
 			}
@@ -1032,7 +1024,7 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 		var labelsBuf []byte
 		queryError = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_recent.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
-				":now":   now.UTC().Format(time.RFC3339),
+				":now":   timeToSQLArg(now),
 				":limit": -1,
 			},
 			ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -1192,7 +1184,7 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	var tasksToStop []string
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":   now.UTC().Format(time.RFC3339),
+			":now":   timeToSQLArg(now),
 			":limit": nil,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -1209,7 +1201,7 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	}
 
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop_all.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":now": now.UTC().Format(time.RFC3339)},
+		Named: map[string]any{":now": timeToSQLArg(now)},
 	})
 	if err != nil {
 		return err
@@ -1223,7 +1215,7 @@ func fetchEntry(db *sqlite.Conn, entryID uuid.UUID, now time.Time) (*entry, erro
 	var result *entry
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/get.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":  now.UTC().Format(time.RFC3339),
+			":now":  timeToSQLArg(now),
 			":uuid": entryID.String(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -1281,7 +1273,7 @@ func isEntryNotFound(err error) bool {
 func endScheduledEntries(db *sqlite.Conn, now time.Time) error {
 	err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/end_scheduled.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now": now.UTC().Format(time.RFC3339),
+			":now": timeToSQLArg(now),
 		},
 	})
 	if err != nil {
