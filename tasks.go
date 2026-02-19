@@ -258,17 +258,17 @@ func newTaskShowCommand(g *globalConfig) *cobra.Command {
 	var format outputFormat
 	registerOutputFormatFlagVar(c, &format)
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskShow(cmd.Context(), g, args[0], format)
+		taskID, err := uuid.Parse(args[0])
+		if err != nil {
+			return err
+		}
+		return runTaskShow(cmd.Context(), g, taskID, format)
 	}
 	return c
 }
 
-func runTaskShow(ctx context.Context, g *globalConfig, taskIDString string, format outputFormat) (err error) {
+func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format outputFormat) (err error) {
 	now := getNow()
-	taskID, err := uuid.Parse(taskIDString)
-	if err != nil {
-		return err
-	}
 
 	db, err := g.open(ctx)
 	if err != nil {
@@ -413,7 +413,11 @@ func newTaskEditCommand(g *globalConfig) *cobra.Command {
 	c.Flags().StringVar(&opts.description, "description", "", "new description for task")
 	c.Flags().StringSliceVar(&opts.labels, "label", nil, "comma-separated task `label`s")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.taskID = args[0]
+		var err error
+		opts.taskID, err = uuid.Parse(args[0])
+		if err != nil {
+			return err
+		}
 		opts.descriptionPresent = c.Flags().Changed("description")
 		opts.labelsPresent = c.Flags().Changed("label")
 		return runTaskEdit(cmd.Context(), g, opts)
@@ -422,7 +426,7 @@ func newTaskEditCommand(g *globalConfig) *cobra.Command {
 }
 
 type editTaskOptions struct {
-	taskID string
+	taskID uuid.UUID
 
 	newTaskOptions
 	descriptionPresent bool
@@ -430,10 +434,6 @@ type editTaskOptions struct {
 }
 
 func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) error {
-	taskID, err := uuid.Parse(opts.taskID)
-	if err != nil {
-		return err
-	}
 	labels, err := cleanLabels(opts.labels)
 	if err != nil {
 		return err
@@ -450,14 +450,14 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	}
 	defer endFn(&err)
 
-	if err := verifyTaskExists(db, taskID); err != nil {
+	if err := verifyTaskExists(db, opts.taskID); err != nil {
 		return err
 	}
 
 	if opts.descriptionPresent {
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/set_description.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
-				":uuid":        taskID.String(),
+				":uuid":        opts.taskID.String(),
 				":description": opts.description,
 			},
 		})
@@ -469,13 +469,13 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	if opts.labelsPresent {
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/clear_labels.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
-				":uuid": taskID.String(),
+				":uuid": opts.taskID.String(),
 			},
 		})
 		if err != nil {
 			return fmt.Errorf("set labels: %v", err)
 		}
-		if err := addTaskLabels(db, taskID, slices.Values(labels)); err != nil {
+		if err := addTaskLabels(db, opts.taskID, slices.Values(labels)); err != nil {
 			return err
 		}
 	}
@@ -635,19 +635,19 @@ func newTaskMergeCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskMerge(cmd.Context(), g, args[len(args)-1], args[:len(args)-1])
+		targetID, parseTargetError := uuid.Parse(args[len(args)-1])
+		oldIDs, parseOldError := parseUUIDs(args[:len(args)-1])
+		if err := errors.Join(parseOldError, parseTargetError); err != nil {
+			return err
+		}
+		return runTaskMerge(cmd.Context(), g, targetID, oldIDs)
 	}
 	return c
 }
 
-func runTaskMerge(ctx context.Context, g *globalConfig, target string, old []string) error {
-	targetID, parseTargetError := uuid.Parse(target)
-	oldIDs, parseOldError := parseUUIDs(old)
-	if err := errors.Join(parseOldError, parseTargetError); err != nil {
-		return err
-	}
-	for i, id := range oldIDs {
-		if slices.Contains(oldIDs[i+1:], id) || id == targetID {
+func runTaskMerge(ctx context.Context, g *globalConfig, target uuid.UUID, old []uuid.UUID) error {
+	for i, id := range old {
+		if slices.Contains(old[i+1:], id) || id == target {
 			return fmt.Errorf("%v repeated", id)
 		}
 	}
@@ -663,31 +663,31 @@ func runTaskMerge(ctx context.Context, g *globalConfig, target string, old []str
 	}
 	defer endFn(&err)
 
-	if err := verifyTaskExists(db, targetID); err != nil {
+	if err := verifyTaskExists(db, target); err != nil {
 		return err
 	}
 
-	for _, oldID := range oldIDs {
+	for _, oldID := range old {
 		if err := verifyTaskExists(db, oldID); err != nil {
 			return err
 		}
 		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/copy_labels.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":source_task_uuid": oldID.String(),
-				":target_task_uuid": targetID.String(),
+				":target_task_uuid": target.String(),
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("copy labels from task %v to %v: %v", oldID, targetID, err)
+			return fmt.Errorf("copy labels from task %v to %v: %v", oldID, target, err)
 		}
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/replace_task.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
 				":old_task_uuid": oldID.String(),
-				":new_task_uuid": targetID.String(),
+				":new_task_uuid": target.String(),
 			},
 		})
 		if err != nil {
-			return fmt.Errorf("changes entries from task %v to %v: %v", oldID, targetID, err)
+			return fmt.Errorf("changes entries from task %v to %v: %v", oldID, target, err)
 		}
 		err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/delete.sql", &sqlitex.ExecOptions{
 			Named: map[string]any{
@@ -712,21 +712,16 @@ func newTaskDeleteCommand(g *globalConfig) *cobra.Command {
 	}
 	force := c.Flags().BoolP("force", "f", false, "delete task even if it has entries")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runTaskDelete(cmd.Context(), g, args, *force)
+		taskIDs, err := parseUUIDs(args)
+		if err != nil {
+			return err
+		}
+		return runTaskDelete(cmd.Context(), g, taskIDs, *force)
 	}
 	return c
 }
 
-func runTaskDelete(ctx context.Context, g *globalConfig, taskIDStrings []string, force bool) error {
-	taskIDs := make(uuid.UUIDs, 0, len(taskIDStrings))
-	for _, s := range taskIDStrings {
-		id, err := uuid.Parse(s)
-		if err != nil {
-			return err
-		}
-		taskIDs = append(taskIDs, id)
-	}
-
+func runTaskDelete(ctx context.Context, g *globalConfig, taskIDs []uuid.UUID, force bool) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err

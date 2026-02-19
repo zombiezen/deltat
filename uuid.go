@@ -28,6 +28,7 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 const uuidStringLength = 36
@@ -141,4 +142,33 @@ func runGenerateUUID(ctx context.Context, g *globalConfig, n int) error {
 	}
 	_, err := os.Stdout.Write(buf)
 	return err
+}
+
+type uuidFlag struct {
+	ptr *uuid.UUID
+}
+
+func uuidFlagVar(f *pflag.FlagSet, p *uuid.UUID, name, usage string) {
+	uuidFlagVarP(f, p, name, "", usage)
+}
+
+func uuidFlagVarP(f *pflag.FlagSet, p *uuid.UUID, name, shorthand, usage string) {
+	f.VarP(uuidFlag{p}, name, shorthand, usage)
+}
+
+func (f uuidFlag) String() string {
+	return f.ptr.String()
+}
+
+func (f uuidFlag) Set(s string) error {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return err
+	}
+	*f.ptr = u
+	return nil
+}
+
+func (f uuidFlag) Type() string {
+	return "uuid"
 }

@@ -379,12 +379,12 @@ func newStartCommand(g *globalConfig) *cobra.Command {
 	opts := &startOptions{globalConfig: g}
 	c.Flags().StringSliceVar(&opts.newTaskOptions.labels, "label", nil, "comma-separated `labels` for new task")
 	c.Flags().BoolVarP(&opts.detach, "detach", "d", false, "start task without occupying terminal")
-	c.Flags().StringVarP(&opts.continueID, "continue", "c", "", "`ID` of a previous task to continue")
+	uuidFlagVarP(c.Flags(), &opts.continueID, "continue", "c", "`ID` of a previous task to continue")
 	c.Flags().StringVarP(&opts.startTimeOverride, "start", "s", "", "`time` to use for the entry's start")
 	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "scheduled end `time` for task (can be a duration like \"1h5m\")")
 	c.Flags().BoolVarP(&opts.pomodoro, "pomodoro", "p", false, "run a timed session")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		if len(args) == 0 && opts.continueID == "" && opts.newTaskOptions.isEmpty() {
+		if len(args) == 0 && opts.continueID == uuid.Nil && opts.newTaskOptions.isEmpty() {
 			opts.continueInteractive = true
 		} else {
 			opts.newTaskOptions.description = taskDescriptionFromArgs(args)
@@ -405,7 +405,7 @@ type startOptions struct {
 	startTimeOverride   string
 	endTime             string
 	detach              bool
-	continueID          string
+	continueID          uuid.UUID
 	continueInteractive bool
 	pomodoro            bool
 }
@@ -421,7 +421,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 	}
 
-	isContinue := opts.continueID != "" || opts.continueInteractive
+	isContinue := opts.continueID != uuid.Nil || opts.continueInteractive
 	if isContinue && !opts.newTaskOptions.isEmpty() {
 		return fmt.Errorf("do not pass task options when continuing")
 	}
@@ -453,12 +453,8 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			// Don't count the time interactively selecting the task.
 			entryStartTime = startedAt
 		}
-	case opts.continueID != "":
-		var err error
-		taskID, err = uuid.Parse(opts.continueID)
-		if err != nil {
-			return err
-		}
+	case opts.continueID != uuid.Nil:
+		taskID = opts.continueID
 	}
 
 	// Parse end time once entryStartTime settles.
@@ -695,7 +691,7 @@ func newEntryNewCommand(g *globalConfig) *cobra.Command {
 	opts := &newEntryOptions{globalConfig: g}
 	c.Flags().StringVar(&opts.newTaskOptions.description, "description", "", "description of new task")
 	c.Flags().StringSliceVar(&opts.newTaskOptions.labels, "label", nil, "comma-separated `labels` for new task")
-	c.Flags().StringVar(&opts.taskID, "task", "", "`ID` of a previous task to continue")
+	uuidFlagVar(c.Flags(), &opts.taskID, "task", "`ID` of a previous task to continue")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		opts.startTime = args[0]
 		opts.endTime = args[1]
@@ -706,7 +702,7 @@ func newEntryNewCommand(g *globalConfig) *cobra.Command {
 			return err
 		}
 
-		if opts.taskID != "" && !opts.newTaskOptions.isEmpty() {
+		if opts.taskID != uuid.Nil && !opts.newTaskOptions.isEmpty() {
 			return fmt.Errorf("do not pass task options when using --task")
 		}
 
@@ -721,7 +717,7 @@ type newEntryOptions struct {
 	startTime string
 	endTime   string
 
-	taskID         string
+	taskID         uuid.UUID
 	newTaskOptions newTaskOptions
 }
 
@@ -739,15 +735,6 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 		return fmt.Errorf("start time is after end time")
 	}
 
-	var taskID uuid.UUID
-	if opts.taskID != "" {
-		var err error
-		taskID, err = uuid.Parse(opts.taskID)
-		if err != nil {
-			return fmt.Errorf("task ID: %v", err)
-		}
-	}
-
 	db, err := opts.open(ctx)
 	if err != nil {
 		return err
@@ -760,6 +747,7 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	defer endFn(&err)
 
 	var prevID uuid.UUID
+	taskID := opts.taskID
 	if taskID == uuid.Nil {
 		taskID = newUUIDV7(now, uuid.Nil)
 		prevID = taskID
@@ -814,29 +802,29 @@ func newEntryEditCommand(g *globalConfig) *cobra.Command {
 	opts := new(editEntryOptions)
 	c.Flags().StringVarP(&opts.startTime, "start", "s", "", "start `time` of the entry")
 	c.Flags().StringVarP(&opts.endTime, "end", "e", "", "end `time` of the entry")
-	c.Flags().StringVar(&opts.taskID, "task", "", "`ID` of the task to associate with the entry")
+	uuidFlagVar(c.Flags(), &opts.taskID, "task", "`ID` of the task to associate with the entry")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		opts.entryID = args[0]
+		var err error
+		opts.entryID, err = uuid.Parse(args[0])
+		if err != nil {
+			return err
+		}
 		return runEntryEdit(cmd.Context(), g, opts)
 	}
 	return c
 }
 
 type editEntryOptions struct {
-	entryID string
+	entryID uuid.UUID
 
 	startTime string
 	endTime   string
-	taskID    string
+	taskID    uuid.UUID
 }
 
 func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) error {
 	now := getNow()
 
-	entryID, err := uuid.Parse(opts.entryID)
-	if err != nil {
-		return err
-	}
 	var startTime time.Time
 	if opts.startTime != "" {
 		var err error
@@ -853,14 +841,6 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 			return fmt.Errorf("end time: %v", err)
 		}
 	}
-	var taskID uuid.UUID
-	if opts.taskID != "" {
-		var err error
-		taskID, err = uuid.Parse(opts.taskID)
-		if err != nil {
-			return fmt.Errorf("task ID: %v", err)
-		}
-	}
 
 	db, err := g.open(ctx)
 	if err != nil {
@@ -873,16 +853,16 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	}
 	defer endFn(&err)
 
-	if _, err := fetchEntry(db, entryID, now); err != nil {
+	if _, err := fetchEntry(db, opts.entryID, now); err != nil {
 		return err
 	}
 
-	if err := updateEntryTimes(db, entryID, startTime, opts.startTime != "", endTime, opts.endTime != ""); err != nil {
+	if err := updateEntryTimes(db, opts.entryID, startTime, opts.startTime != "", endTime, opts.endTime != ""); err != nil {
 		return err
 	}
 
-	if opts.taskID != "" {
-		if err := updateEntryTaskID(db, entryID, taskID); err != nil {
+	if opts.taskID != uuid.Nil {
+		if err := updateEntryTaskID(db, opts.entryID, opts.taskID); err != nil {
 			return err
 		}
 	}
@@ -1103,21 +1083,16 @@ func newEntryDeleteCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runEntryDelete(cmd.Context(), g, args)
+		ids, err := parseUUIDs(args)
+		if err != nil {
+			return err
+		}
+		return runEntryDelete(cmd.Context(), g, ids)
 	}
 	return c
 }
 
-func runEntryDelete(ctx context.Context, g *globalConfig, idStrings []string) error {
-	ids := make(uuid.UUIDs, 0, len(idStrings))
-	for _, s := range idStrings {
-		id, err := uuid.Parse(s)
-		if err != nil {
-			return err
-		}
-		ids = append(ids, id)
-	}
-
+func runEntryDelete(ctx context.Context, g *globalConfig, ids []uuid.UUID) error {
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
