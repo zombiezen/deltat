@@ -212,7 +212,7 @@ func insertTask(db *sqlite.Conn, now time.Time, t *task) (err error) {
 		},
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("create task %s: %w", plainTaskDescription(t.Description, true), err)
 	}
 	if len(t.Labels) > 0 {
 		if err := addTaskLabels(db, t.ID, slices.Values(t.Labels)); err != nil {

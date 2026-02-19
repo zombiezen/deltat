@@ -798,7 +798,7 @@ func insertEntry(db *sqlite.Conn, e *entry) error {
 		Named: args,
 	})
 	if err != nil {
-		return fmt.Errorf("create entry: %v", err)
+		return fmt.Errorf("create entry: %w", err)
 	}
 	return nil
 }
