@@ -1,0 +1,20 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat entry import input1.csv
+
+deltat entry import --replace-start=00:00:00 --replace-end=23:59:59 --dry-run input2.csv
+stdout 'Replacing 2 entries'
+stdout 'input2.csv:2: new task “Ohai”'
+stdout 'input2.csv:2: update entry 019b78c9-0a80-7b57-a933-85252fe70e28 for task'
+
+deltat timesheet --all --format=csv
+cmp stdout input1.csv
+
+-- input1.csv --
+ID,Start Time,End Time,Task ID,Description
+019b78c9-0a80-7b55-82a2-df16b386d24a,2025-12-31T17:05:00Z,2025-12-31T17:15:00Z,019b78c9-0a80-7b54-8881-c52872ee672a,Foo
+019b78c9-0a80-7b57-a933-85252fe70e28,2026-01-01T06:20:00Z,2026-01-01T06:27:00Z,019b78c9-0a80-7b56-b9af-9f5d8e043eaf,Bar
+019b78c9-0a80-7b59-a40f-a0657d0323c3,2026-01-01T07:30:00Z,2026-01-01T07:40:00Z,019b78c9-0a80-7b58-a0e6-16cdbeb42672,Baz
+-- input2.csv --
+ID,Description,Task ID,Start Time,End Time
+019b78c9-0a80-7b57-a933-85252fe70e28,Ohai,019b78c9-0a80-7b5a-8f7a-0bee8a0e5e3e,2026-01-01T08:20:00Z,2026-01-01T08:27:00Z

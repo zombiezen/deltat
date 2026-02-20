@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -52,6 +53,10 @@ func newEntryImportCommand(g *globalConfig) *cobra.Command {
 		inputFileName: "<stdin>",
 	}
 	c.Flags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "preview changes to be made")
+	c.Flags().BoolVar(&opts.replaceAllEntries, "replace-all", false, "replace all entries")
+	c.Flags().StringVar(&opts.replaceMinTime, "replace-start", "", "replace entries after `time`")
+	c.Flags().StringVar(&opts.replaceMaxTime, "replace-end", "", "replace entries before `time`")
+	uuidFlagVar(c.Flags(), &opts.replaceTaskID, "replace-task", "replace all entries for the task with `ID`")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		if len(args) > 0 {
@@ -76,10 +81,37 @@ type entryImportOptions struct {
 	input         io.Reader
 	inputFileName string
 	dryRun        bool
+
+	replaceAllEntries bool
+	replaceMinTime    string
+	replaceMaxTime    string
+	replaceTaskID     uuid.UUID
+}
+
+func (opts *entryImportOptions) isReplace() bool {
+	return opts != nil && (opts.replaceAllEntries ||
+		opts.replaceMinTime != "" ||
+		opts.replaceMaxTime != "" ||
+		opts.replaceTaskID != uuid.Nil)
 }
 
 func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOptions) (err error) {
 	now := getNow()
+	if opts.replaceAllEntries &&
+		(opts.replaceMinTime != "" || opts.replaceMaxTime != "" || opts.replaceTaskID != uuid.Nil) {
+		return fmt.Errorf("can't replace all and pass other replace flags")
+	}
+	replaceMinTime, err := parseTimeOrEmpty(now, opts.replaceMinTime, false)
+	if err != nil {
+		return err
+	}
+	replaceMaxTime, err := parseTimeOrEmpty(now, opts.replaceMaxTime, false)
+	if err != nil {
+		return err
+	}
+	if !replaceMinTime.IsZero() && !replaceMaxTime.IsZero() && replaceMaxTime.Before(replaceMinTime) {
+		return fmt.Errorf("replace start (%s) is before end (%s)", replaceMinTime.Format(time.RFC3339), replaceMaxTime.Format(time.RFC3339))
+	}
 
 	r := csv.NewReader(opts.input)
 	r.ReuseRecord = true
@@ -106,8 +138,21 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 	if startTimeColumn == -1 || endTimeColumn == -1 {
 		return fmt.Errorf("%s: must have Start Time and End Time columns", opts.inputFileName)
 	}
-	if taskIDColumn == -1 && taskDescriptionColumn == -1 {
+	if opts.replaceTaskID == uuid.Nil && taskIDColumn == -1 && taskDescriptionColumn == -1 {
 		return fmt.Errorf("%s: must have either a Task ID or Description column", opts.inputFileName)
+	}
+
+	var deleteArgs map[string]any
+	if opts.isReplace() {
+		deleteArgs = map[string]any{
+			":all":       opts.replaceAllEntries,
+			":min_time":  timeToSQLArg(replaceMinTime),
+			":max_time":  timeToSQLArg(replaceMaxTime),
+			":task_uuid": nil,
+		}
+		if opts.replaceTaskID != uuid.Nil {
+			deleteArgs[":task_uuid"] = opts.replaceTaskID.String()
+		}
 	}
 
 	db, err := g.open(ctx)
@@ -122,24 +167,71 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 			return err
 		}
 		defer rollback()
+
+		if opts.isReplace() {
+			if opts.replaceTaskID != uuid.Nil {
+				if err := verifyTaskExists(db, opts.replaceTaskID); err != nil {
+					return err
+				}
+			}
+			err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/count_bound.sql", &sqlitex.ExecOptions{
+				Named: deleteArgs,
+				ResultFunc: func(stmt *sqlite.Stmt) error {
+					if n := stmt.ColumnInt64(0); n > 0 {
+						if _, err := fmt.Printf("Replacing %d entries\n", n); err != nil {
+							return err
+						}
+					}
+					return nil
+				},
+			})
+			if err != nil {
+				return err
+			}
+		}
 	} else {
 		var endFn func(*error)
 		endFn, err = sqlitex.ImmediateTransaction(db)
 		if err != nil {
 			return err
 		}
-		defer func() {
-			// Because this operation is largely idempotent,
-			// we want to commit as much as we can,
-			// even if the overall import fails.
-			var endError error
-			endFn(&endError)
-			if err == nil {
-				err = endError
-			} else if endError != nil {
-				log.Errorf(ctx, "Commit transaction: %v", endError)
+		if opts.isReplace() {
+			defer endFn(&err)
+
+			if opts.replaceAllEntries {
+				// Performance optimization: use truncate if we're deleting all rows.
+				// https://www.sqlite.org/lang_delete.html#the_truncate_optimization
+				err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/truncate.sql", nil)
+				if err != nil {
+					return err
+				}
+			} else {
+				if opts.replaceTaskID != uuid.Nil {
+					if err := verifyTaskExists(db, opts.replaceTaskID); err != nil {
+						return err
+					}
+				}
+				err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/delete_bound.sql", &sqlitex.ExecOptions{
+					Named: deleteArgs,
+				})
+				if err != nil {
+					return err
+				}
 			}
-		}()
+		} else {
+			defer func() {
+				// Because upsertion is largely idempotent and reversible,
+				// we want to commit as much as we can,
+				// even if the overall import fails.
+				var endError error
+				endFn(&endError)
+				if err == nil {
+					err = endError
+				} else if endError != nil {
+					log.Errorf(ctx, "Commit transaction: %v", endError)
+				}
+			}()
+		}
 	}
 
 	taskMap := make(map[string]uuid.UUID)
@@ -173,6 +265,11 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 			resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 			continue
 		}
+		if err := validateTimeInRange(e.StartTime, replaceMinTime, replaceMaxTime); err != nil {
+			line, col := r.FieldPos(startTimeColumn)
+			resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
+			continue
+		}
 		if s := row[endTimeColumn]; s != "" {
 			endTime, err := parseTime(now, row[endTimeColumn], true)
 			if err != nil {
@@ -180,9 +277,15 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 				continue
 			}
+			if err := validateTimeInRange(endTime, replaceMinTime, replaceMaxTime); err != nil {
+				line, col := r.FieldPos(startTimeColumn)
+				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
+				continue
+			}
 			e.RawEndTime = new(endTime)
 		}
 
+		e.Task.ID = opts.replaceTaskID
 		if 0 <= taskIDColumn && taskIDColumn < len(row) {
 			s := row[taskIDColumn]
 			if s != "" {
@@ -193,7 +296,12 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 					continue
 				}
-			} else if taskDescriptionColumn < 0 {
+				if opts.replaceTaskID != uuid.Nil && e.Task.ID != opts.replaceTaskID {
+					line, col := r.FieldPos(taskIDColumn)
+					resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: task ID does not match %v", opts.inputFileName, line, col, opts.replaceTaskID))
+					continue
+				}
+			} else if opts.replaceTaskID == uuid.Nil && taskDescriptionColumn < 0 {
 				line, col := r.FieldPos(taskIDColumn)
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: missing task ID", opts.inputFileName, line, col))
 				continue

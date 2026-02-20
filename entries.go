@@ -826,21 +826,13 @@ type editEntryOptions struct {
 func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) error {
 	now := getNow()
 
-	var startTime time.Time
-	if opts.startTime != "" {
-		var err error
-		startTime, err = parseTime(now, opts.startTime, false)
-		if err != nil {
-			return fmt.Errorf("start time: %v", err)
-		}
+	startTime, err := parseTimeOrEmpty(now, opts.startTime, false)
+	if err != nil {
+		return fmt.Errorf("start time: %v", err)
 	}
-	var endTime time.Time
-	if opts.endTime != "" {
-		var err error
-		endTime, err = parseTime(now, opts.endTime, false)
-		if err != nil {
-			return fmt.Errorf("end time: %v", err)
-		}
+	endTime, err := parseTimeOrEmpty(now, opts.endTime, false)
+	if err != nil {
+		return fmt.Errorf("end time: %v", err)
 	}
 
 	db, err := g.open(ctx)

@@ -128,6 +128,15 @@ func newStrictDate(year int, month time.Month, day int) (gregorian.Date, error) 
 	return d, nil
 }
 
+// parseTimeOrEmpty is like [parseTime]
+// but parses an empty string as the zero [time.Time].
+func parseTimeOrEmpty(now time.Time, s string, dateRequired bool) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	return parseTime(now, s, dateRequired)
+}
+
 // parseTime parses a wide variety of time formats into a time
 // based on the current time and location.
 // parseTime is intended to operate on human input,
@@ -338,6 +347,16 @@ func timeToSQLArg(t time.Time) any {
 		return nil
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+func validateTimeInRange(t time.Time, minTime, maxTime time.Time) error {
+	if !minTime.IsZero() && t.Before(minTime) {
+		return fmt.Errorf("%s is before start (%s)", t.Format(time.RFC3339), minTime.Format(time.RFC3339))
+	}
+	if !maxTime.IsZero() && !t.Before(maxTime) {
+		return fmt.Errorf("%s is after end (%s)", t.Format(time.RFC3339), maxTime.Format(time.RFC3339))
+	}
+	return nil
 }
 
 type stringParser struct {
