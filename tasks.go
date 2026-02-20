@@ -51,6 +51,7 @@ type task struct {
 func newTaskCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "task",
+		Aliases:       []string{"t"},
 		Short:         "Manage types of entries",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -489,6 +490,7 @@ var taskSelectCommandHelp string
 func newTaskSelectCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "select",
+		Aliases:       []string{"sel"},
 		Short:         "Run fzf on the tasks",
 		Long:          taskSelectCommandHelp,
 		Args:          cobra.ArbitraryArgs,

@@ -63,6 +63,7 @@ func (e *entry) isActive() bool {
 func newEntryCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "entry",
+		Aliases:       []string{"e"},
 		Short:         "Manage time entries",
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -954,6 +955,7 @@ var entrySelectCommandHelp string
 func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 	c := &cobra.Command{
 		Use:           "select",
+		Aliases:       []string{"sel"},
 		Short:         "Run fzf on the entries",
 		Long:          entrySelectCommandHelp,
 		Args:          cobra.ArbitraryArgs,
