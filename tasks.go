@@ -893,7 +893,8 @@ func (e *taskNotFoundError) Error() string {
 }
 
 func isTaskNotFound(err error) bool {
-	return errors.As(err, new(*taskNotFoundError))
+	_, ok := errors.AsType[*taskNotFoundError](err)
+	return ok
 }
 
 func taskDescriptionFromArgs(args []string) string {

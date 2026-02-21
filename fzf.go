@@ -59,11 +59,10 @@ type fzfOptions struct {
 }
 
 func (opts *fzfOptions) clone() *fzfOptions {
-	opts2 := new(fzfOptions)
-	if opts != nil {
-		*opts2 = *opts
+	if opts == nil {
+		return new(fzfOptions)
 	}
-	return opts2
+	return new(*opts)
 }
 
 func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]string, error) {
@@ -133,8 +132,7 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 	if err != nil {
 		exitCode := -1
 		hasStderr := false
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
+		if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 			hasStderr = len(exitError.Stderr) > 0
 			exitCode = exitError.ExitCode()
 		}

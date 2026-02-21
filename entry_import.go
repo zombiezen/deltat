@@ -180,7 +180,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
 				continue
 			}
-			e.RawEndTime = &endTime
+			e.RawEndTime = new(endTime)
 		}
 
 		if 0 <= taskIDColumn && taskIDColumn < len(row) {

@@ -1220,7 +1220,7 @@ func fillEntryFromDatabase(e *entry, stmt *sqlite.Stmt) error {
 		if err != nil {
 			return fmt.Errorf("end_time: %v", err)
 		}
-		e.RawEndTime = &t
+		e.RawEndTime = new(t)
 	}
 	if i := stmt.ColumnIndex("scheduled_end_time"); stmt.ColumnType(i) != sqlite.TypeNull {
 		var err error
@@ -1241,7 +1241,8 @@ func (e *entryNotFoundError) Error() string {
 }
 
 func isEntryNotFound(err error) bool {
-	return errors.As(err, new(*entryNotFoundError))
+	_, ok := errors.AsType[*entryNotFoundError](err)
+	return ok
 }
 
 // endScheduledEntries sets the end time of any entries
