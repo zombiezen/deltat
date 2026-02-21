@@ -26,7 +26,9 @@
         pkgs = import nixpkgs { inherit system; };
       in
       {
-        packages.default = pkgs.callPackage ./package.nix {};
+        packages.default = pkgs.callPackage ./package.nix {
+          buildGoModule = pkgs.buildGo126Module;
+        };
 
         devShells.default = pkgs.mkShell {
           packages = [
