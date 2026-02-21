@@ -456,31 +456,46 @@ func runTaskEdit(ctx context.Context, g *globalConfig, opts *editTaskOptions) er
 	}
 
 	if opts.descriptionPresent {
-		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/set_description.sql", &sqlitex.ExecOptions{
-			Named: map[string]any{
-				":uuid":        opts.taskID.String(),
-				":description": opts.description,
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("set description: %v", err)
-		}
-	}
-
-	if opts.labelsPresent {
-		err := sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/clear_labels.sql", &sqlitex.ExecOptions{
-			Named: map[string]any{
-				":uuid": opts.taskID.String(),
-			},
-		})
-		if err != nil {
-			return fmt.Errorf("set labels: %v", err)
-		}
-		if err := addTaskLabels(db, opts.taskID, slices.Values(labels)); err != nil {
+		if err := setTaskDescription(db, opts.taskID, opts.description); err != nil {
 			return err
 		}
 	}
 
+	if opts.labelsPresent {
+		if err := setTaskLabels(db, opts.taskID, slices.Values(labels)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func setTaskDescription(db *sqlite.Conn, taskID uuid.UUID, description string) (err error) {
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/set_description.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":uuid":        taskID.String(),
+			":description": description,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set description of task %v: %v", taskID, err)
+	}
+	return nil
+}
+
+func setTaskLabels(db *sqlite.Conn, taskID uuid.UUID, labels iter.Seq[string]) (err error) {
+	defer sqlitex.Save(db)(&err)
+	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/clear_labels.sql", &sqlitex.ExecOptions{
+		Named: map[string]any{
+			":uuid": taskID.String(),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set labels for task %v: %v", taskID, err)
+	}
+	if err := addTaskLabels(db, taskID, labels); err != nil {
+		return err
+	}
 	return nil
 }
 
