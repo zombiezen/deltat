@@ -1,0 +1,22 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat entry import input1.csv
+deltat entry import --replace-task=019b78c9-0a80-7b56-b9af-9f5d8e043eaf input2.csv
+
+deltat timesheet --all --format=csv
+cmp stdout want.csv
+
+
+-- input1.csv --
+ID,Description,Task ID,Start Time,End Time
+019b78c9-0a80-7b55-82a2-df16b386d24a,Foo,019b78c9-0a80-7b54-8881-c52872ee672a,2025-12-31T17:05:00Z,2025-12-31T17:15:00Z
+019b78c9-0a80-7b57-a933-85252fe70e28,Bar,019b78c9-0a80-7b56-b9af-9f5d8e043eaf,2026-01-01T06:20:00Z,2026-01-01T06:27:00Z
+019b78c9-0a80-7b59-a40f-a0657d0323c3,Baz,019b78c9-0a80-7b58-a0e6-16cdbeb42672,2026-01-01T07:30:00Z,2026-01-01T07:40:00Z
+-- input2.csv --
+ID,Start Time,End Time,Task ID
+019b78c9-0a80-7b5b-9b9f-799ce1843699,2026-01-01T08:20:00Z,2026-01-01T08:27:00Z,019b78c9-0a80-7b56-b9af-9f5d8e043eaf
+-- want.csv --
+ID,Start Time,End Time,Task ID,Description
+019b78c9-0a80-7b55-82a2-df16b386d24a,2025-12-31T17:05:00Z,2025-12-31T17:15:00Z,019b78c9-0a80-7b54-8881-c52872ee672a,Foo
+019b78c9-0a80-7b59-a40f-a0657d0323c3,2026-01-01T07:30:00Z,2026-01-01T07:40:00Z,019b78c9-0a80-7b58-a0e6-16cdbeb42672,Baz
+019b78c9-0a80-7b5b-9b9f-799ce1843699,2026-01-01T08:20:00Z,2026-01-01T08:27:00Z,019b78c9-0a80-7b56-b9af-9f5d8e043eaf,Bar
