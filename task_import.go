@@ -53,7 +53,10 @@ func newTaskImportCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 
-	opts := new(taskImportOptions)
+	opts := &taskImportOptions{
+		input:         os.Stdin,
+		inputFileName: "<stdin>",
+	}
 	c.Flags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "preview changes to be made")
 
 	formatOptions := joinSeq(func(yield func(string) bool) {
