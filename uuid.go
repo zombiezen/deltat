@@ -124,16 +124,17 @@ func newGenerateUUIDCommand(g *globalConfig) *cobra.Command {
 		Hidden:        true,
 	}
 	n := c.Flags().IntP("count", "n", 1, "`number` of UUIDs to generate")
+	var prevID uuid.UUID
+	uuidFlagVar(c.Flags(), &prevID, "previous", "previous `UUID` in batch")
 	c.RunE = func(cmd *cobra.Command, args []string) error {
-		return runGenerateUUID(cmd.Context(), g, *n)
+		return runGenerateUUID(cmd.Context(), g, prevID, *n)
 	}
 	return c
 }
 
-func runGenerateUUID(ctx context.Context, g *globalConfig, n int) error {
+func runGenerateUUID(ctx context.Context, g *globalConfig, prevID uuid.UUID, n int) error {
 	now := getNow()
 	buf := make([]byte, 0, (uuidStringLength+1)*n)
-	var prevID uuid.UUID
 	for range n {
 		id := newUUIDV7(now, prevID)
 		buf = appendUUIDText(buf, id)
