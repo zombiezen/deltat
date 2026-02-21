@@ -59,6 +59,7 @@ func newTaskCommand(g *globalConfig) *cobra.Command {
 	c.AddCommand(
 		newTaskDeleteCommand(g),
 		newTaskEditCommand(g),
+		newTaskImportCommand(g),
 		newTaskListCommand(g),
 		newTaskMergeCommand(g),
 		newTaskNewCommand(g),

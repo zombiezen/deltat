@@ -1,0 +1,16 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat task import --format=json input.json
+
+deltat task list --format=csv
+cmp stdout want.csv
+
+-- input.json --
+{"id": "019b78c9-0a80-7f0e-9bc8-1658327c3eaf", "description": "Foo", "labels": ["label1"]}
+{"id": "019b78c9-0a80-7f0f-98f5-05d28d68f943", "description": "Bar", "labels": ["label2", "label3"]}
+{"id": "019b78c9-0a80-7f10-b5c6-be8f6297b04c", "description": "Baz"}
+-- want.csv --
+ID,Description,Labels
+019b78c9-0a80-7f0e-9bc8-1658327c3eaf,Foo,label1
+019b78c9-0a80-7f0f-98f5-05d28d68f943,Bar,"label2,label3"
+019b78c9-0a80-7f10-b5c6-be8f6297b04c,Baz,

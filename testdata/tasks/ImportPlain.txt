@@ -1,0 +1,11 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat task import --format=plain input.txt
+
+deltat task list --format=plain
+cmp stdout input.txt
+
+-- input.txt --
+Foo
+Bar
+Baz

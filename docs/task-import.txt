@@ -1,0 +1,28 @@
+Import a file of tasks.
+
+If no file is given, standard input will be read.
+The format will be determined by the --format flag.
+
+Plain text
+
+Each non-empty line will be imported as a new task
+with the line as the description.
+
+CSV
+
+The first row of the CSV file is used as column headers.
+The CSV file must include a "Description" column.
+Optionally, the CSV file may include an "ID" column or an "Labels" column.
+If the "ID" column for a row matches an existing task,
+then that task will be updated in-place.
+Otherwise, a new task will be created.
+The "Labels" column is a comma-separated set of labels.
+
+JSON
+
+Each line is a JSON object.
+The fields are:
+
+- "id", a UUID string
+- "description", a string
+- "labels", an array of strings

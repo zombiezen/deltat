@@ -1,0 +1,23 @@
+env DELTAT_DB=$PWD/foo.sqlite
+
+deltat task import --format=csv input1.csv
+deltat task import --format=csv input2.csv
+
+deltat task list --format=csv
+cmp stdout want.csv
+
+-- input1.csv --
+ID,Description,Labels
+019b78c9-0a80-7f0e-9bc8-1658327c3eaf,Foo,label1
+019b78c9-0a80-7f0f-98f5-05d28d68f943,Bar,"label2,label3"
+019b78c9-0a80-7f10-b5c6-be8f6297b04c,Baz,
+-- input2.csv --
+ID,Description,Labels
+019b78c9-0a80-7f0f-98f5-05d28d68f943,Spam,label4
+019b78c9-0a80-7f11-8bb6-f96587ad5d0b,Quux,
+-- want.csv --
+ID,Description,Labels
+019b78c9-0a80-7f0e-9bc8-1658327c3eaf,Foo,label1
+019b78c9-0a80-7f0f-98f5-05d28d68f943,Spam,label4
+019b78c9-0a80-7f10-b5c6-be8f6297b04c,Baz,
+019b78c9-0a80-7f11-8bb6-f96587ad5d0b,Quux,
