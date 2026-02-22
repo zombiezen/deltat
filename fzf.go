@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -31,6 +30,8 @@ import (
 )
 
 type fzfOptions struct {
+	env *processEnvironment
+
 	// template is the field index expression or template
 	// for transforming each item for display.
 	// If empty, the item is displayed as-is.
@@ -66,9 +67,11 @@ func (opts *fzfOptions) clone() *fzfOptions {
 }
 
 func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]string, error) {
-	fzfPath := os.Getenv("DELTAT_FZF")
-	if fzfPath == "" {
-		fzfPath = "fzf"
+	fzfPath := "fzf"
+	if opts != nil {
+		if p := opts.env.getenv("DELTAT_FZF"); p != "" {
+			fzfPath = opts.env.path(p)
+		}
 	}
 	c := exec.CommandContext(ctx,
 		fzfPath,
@@ -76,7 +79,12 @@ func fzf(ctx context.Context, items iter.Seq[string], opts *fzfOptions) ([]strin
 		"--print0",
 		"--no-sort",
 	)
+	c.Env = []string{}
 	if opts != nil {
+		if len(opts.env.environ) > 0 {
+			c.Env = opts.env.environ
+		}
+
 		if opts.delimiter != "" {
 			c.Args = append(c.Args, "--delimiter="+opts.delimiter)
 		}

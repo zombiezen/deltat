@@ -17,11 +17,12 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"iter"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ import (
 	"github.com/spf13/pflag"
 	"rsc.io/script"
 	"rsc.io/script/scripttest"
+	"zombiezen.com/go/log/testlog"
 )
 
 func TestEntries(t *testing.T) {
@@ -49,6 +51,8 @@ func TestPomodoro(t *testing.T) {
 func TestTasks(t *testing.T) {
 	runScriptTests(t, "testdata/tasks/*.txt")
 }
+
+const testTimeVar = "DELTAT_TESTTIME"
 
 func runScriptTests(t *testing.T, pattern string) {
 	engine := &script.Engine{
@@ -105,22 +109,56 @@ func runScriptTests(t *testing.T, pattern string) {
 		Args:    "[-n number] [file [...]]",
 	}, tailCmd)
 
-	exePath, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	engine.Cmds["deltat"] = script.Program(
-		exePath,
-		func(c *exec.Cmd) error { return killProcess(c.Process) },
-		30*time.Second,
-	)
-	ctx := t.Context()
+	engine.Cmds["deltat"] = script.Command(script.CmdUsage{
+		Summary: "run the 'deltat' program provided by the script host",
+		Args:    "[args...]",
+		Async:   true,
+	}, deltatCmd)
+	ctx := testlog.WithTB(t.Context(), t)
 	testEnviron := []string{
-		exeModeVar + "=1",
 		testTimeVar + "=2026-01-01T09:00:00Z",
 		"TZ=UTC0",
 	}
 	scripttest.Test(t, ctx, engine, testEnviron, filepath.FromSlash(pattern))
+}
+
+func deltatCmd(state *script.State, args ...string) (script.WaitFunc, error) {
+	var stdoutBuf strings.Builder
+	var stderrBuf strings.Builder
+
+	logStateValue := &logState{
+		output: &stderrBuf,
+	}
+	ctx := context.WithValue(state.Context(), logStateKey{}, logStateValue)
+	env := &processEnvironment{
+		stdin:  bytes.NewReader(nil),
+		stdout: &stdoutBuf,
+		stderr: &stderrBuf,
+
+		environ:       state.Environ(),
+		workDirectory: state.Getwd(),
+		location:      time.UTC,
+
+		initLogging: func(showDebug bool) {
+			logStateValue.hideDebug.Store(!showDebug)
+		},
+	}
+
+	testTimeValue, _ := state.LookupEnv(testTimeVar)
+	var err error
+	env.runStart, err = time.Parse(time.RFC3339Nano, testTimeValue)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %v", testTimeVar, err)
+	}
+
+	done := make(chan error)
+	go func() {
+		done <- run(ctx, env, args)
+	}()
+	return func(s *script.State) (stdout string, stderr string, err error) {
+		err = <-done
+		return stdoutBuf.String(), stderrBuf.String(), err
+	}, nil
 }
 
 func cutCmd(state *script.State, args ...string) (script.WaitFunc, error) {
@@ -362,25 +400,4 @@ func splitLines(s string) []string {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
-}
-
-const (
-	exeModeVar  = "DELTAT_SCRIPTTEST"
-	testTimeVar = "DELTAT_TESTTIME"
-)
-
-func TestMain(m *testing.M) {
-	if os.Getenv(exeModeVar) == "1" {
-		if s := os.Getenv(testTimeVar); s != "" {
-			t, err := time.Parse(time.RFC3339Nano, s)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "%s incorrect: %v\n", testTimeVar, err)
-				os.Exit(1)
-			}
-			testTime = t
-		}
-		main()
-	} else {
-		m.Run()
-	}
 }

@@ -30,7 +30,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -49,7 +48,7 @@ func newEntryImportCommand(g *globalConfig) *cobra.Command {
 		SilenceUsage:  true,
 	}
 	opts := &entryImportOptions{
-		input:         os.Stdin,
+		input:         g.stdin,
 		inputFileName: "<stdin>",
 	}
 	c.Flags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "preview changes to be made")
@@ -62,13 +61,13 @@ func newEntryImportCommand(g *globalConfig) *cobra.Command {
 		if len(args) > 0 {
 			opts.inputFileName = filepath.Base(args[0])
 
-			f, err := os.Open(args[0])
+			f, err := os.Open(g.path(args[0]))
 			if err != nil {
 				return err
 			}
 			defer f.Close()
 			opts.input = f
-		} else if term.IsTerminal(int(os.Stdin.Fd())) {
+		} else if g.isStdinTerminal {
 			log.Infof(ctx, "Reading from stdin...")
 		}
 
@@ -96,16 +95,15 @@ func (opts *entryImportOptions) isReplace() bool {
 }
 
 func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOptions) (err error) {
-	now := getNow()
 	if opts.replaceAllEntries &&
 		(opts.replaceMinTime != "" || opts.replaceMaxTime != "" || opts.replaceTaskID != uuid.Nil) {
 		return fmt.Errorf("can't replace all and pass other replace flags")
 	}
-	replaceMinTime, err := parseTimeOrEmpty(now, opts.replaceMinTime, false)
+	replaceMinTime, err := parseTimeOrEmpty(g.runStart, opts.replaceMinTime, false)
 	if err != nil {
 		return err
 	}
-	replaceMaxTime, err := parseTimeOrEmpty(now, opts.replaceMaxTime, false)
+	replaceMaxTime, err := parseTimeOrEmpty(g.runStart, opts.replaceMaxTime, false)
 	if err != nil {
 		return err
 	}
@@ -178,7 +176,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 				Named: deleteArgs,
 				ResultFunc: func(stmt *sqlite.Stmt) error {
 					if n := stmt.ColumnInt64(0); n > 0 {
-						if _, err := fmt.Printf("Replacing %d entries\n", n); err != nil {
+						if _, err := fmt.Fprintf(g.stdout, "Replacing %d entries\n", n); err != nil {
 							return err
 						}
 					}
@@ -259,7 +257,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 				}
 			}
 		}
-		e.StartTime, err = parseTime(now, row[startTimeColumn], true)
+		e.StartTime, err = parseTime(g.runStart, row[startTimeColumn], true)
 		if err != nil {
 			line, col := r.FieldPos(startTimeColumn)
 			resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
@@ -271,7 +269,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 			continue
 		}
 		if s := row[endTimeColumn]; s != "" {
-			endTime, err := parseTime(now, row[endTimeColumn], true)
+			endTime, err := parseTime(g.runStart, row[endTimeColumn], true)
 			if err != nil {
 				line, col := r.FieldPos(endTimeColumn)
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d:%d: %v", opts.inputFileName, line, col, err))
@@ -319,20 +317,20 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 
 		newTask := e.Task.ID == uuid.Nil
 		if newTask {
-			e.Task.ID = newUUIDV7(now, prevID)
+			e.Task.ID = newUUIDV7(g.runStart, prevID)
 			prevID = e.Task.ID
 		}
 		if opts.dryRun {
 			line, _ := r.FieldPos(0)
 			if newTask {
-				fmt.Printf("%s:%d: new task %s (placeholder ID is %v)\n",
+				fmt.Fprintf(g.stdout, "%s:%d: new task %s (placeholder ID is %v)\n",
 					opts.inputFileName,
 					line,
 					plainTaskDescription(e.Task.Description, true),
 					e.Task.ID)
 			} else if !usedTaskMap {
 				if err := verifyTaskExists(db, e.Task.ID); isTaskNotFound(err) {
-					fmt.Printf("%s:%d: new task %s with ID %v\n",
+					fmt.Fprintf(g.stdout, "%s:%d: new task %s with ID %v\n",
 						opts.inputFileName,
 						line,
 						plainTaskDescription(e.Task.Description, true),
@@ -342,7 +340,7 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 				}
 			}
 		} else {
-			if err := insertTask(db, now, e.Task); err != nil && (newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey) {
+			if err := insertTask(db, g.runStart, e.Task); err != nil && (newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey) {
 				line, _ := r.FieldPos(0)
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 				continue
@@ -354,25 +352,25 @@ func runEntryImportCSV(ctx context.Context, g *globalConfig, opts *entryImportOp
 
 		newEntry := e.ID == uuid.Nil
 		if newEntry {
-			e.ID = newUUIDV7(now, prevID)
+			e.ID = newUUIDV7(g.runStart, prevID)
 			prevID = e.ID
 		}
 		if opts.dryRun {
 			line, _ := r.FieldPos(0)
 			if newEntry {
-				fmt.Printf("%s:%d: new entry for task %v\n",
+				fmt.Fprintf(g.stdout, "%s:%d: new entry for task %v\n",
 					opts.inputFileName,
 					line,
 					e.Task.ID)
-			} else if _, err := fetchEntry(db, e.ID, now); isEntryNotFound(err) {
-				fmt.Printf("%s:%d: new entry for task %v\n",
+			} else if _, err := fetchEntry(db, e.ID, g.runStart); isEntryNotFound(err) {
+				fmt.Fprintf(g.stdout, "%s:%d: new entry for task %v\n",
 					opts.inputFileName,
 					line,
 					e.Task.ID)
 			} else if err != nil {
 				log.Warnf(ctx, "%s:%d: %v", opts.inputFileName, line, err)
 			} else {
-				fmt.Printf("%s:%d: update entry %v for task %v\n",
+				fmt.Fprintf(g.stdout, "%s:%d: update entry %v for task %v\n",
 					opts.inputFileName,
 					line,
 					e.ID,

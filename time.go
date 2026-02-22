@@ -26,15 +26,6 @@ import (
 	"zombiezen.com/go/gregorian"
 )
 
-var testTime time.Time
-
-func getNow() time.Time {
-	if !testTime.IsZero() {
-		return testTime.Local()
-	}
-	return time.Now()
-}
-
 // parseDate parses a wide variety of date formats into a date
 // based on the current time and location.
 // parseDate is intended to operate on human input,
@@ -179,7 +170,7 @@ func parseTime(now time.Time, s string, dateRequired bool) (time.Time, error) {
 		if dateRequired {
 			return time.Time{}, fmt.Errorf("parse time %q: missing date", s)
 		}
-		d = gregorian.NewDate(now.Year(), now.Month(), now.Day())
+		d = dateFromTime(now)
 	} else {
 		var err error
 		d, err = parseDate(now, datePart)
@@ -307,11 +298,10 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d:%02d", hours, minutes, seconds)
 }
 
-func localDateFromTime(t time.Time) gregorian.Date {
+func dateFromTime(t time.Time) gregorian.Date {
 	if t.IsZero() {
 		return gregorian.Date{}
 	}
-	t = t.Local()
 	return gregorian.NewDate(t.Year(), t.Month(), t.Day())
 }
 

@@ -67,7 +67,7 @@ func runLabelList(ctx context.Context, g *globalConfig) error {
 
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "labels/list.sql", &sqlitex.ExecOptions{
 		ResultFunc: func(stmt *sqlite.Stmt) error {
-			_, err := fmt.Println(stmt.GetText("name"))
+			_, err := fmt.Fprintln(g.stdout, stmt.GetText("name"))
 			return err
 		},
 	})

@@ -34,7 +34,6 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/sqlitex"
@@ -54,7 +53,7 @@ func newTaskImportCommand(g *globalConfig) *cobra.Command {
 	}
 
 	opts := &taskImportOptions{
-		input:         os.Stdin,
+		input:         g.stdin,
 		inputFileName: "<stdin>",
 	}
 	c.Flags().BoolVarP(&opts.dryRun, "dry-run", "n", false, "preview changes to be made")
@@ -78,13 +77,13 @@ func newTaskImportCommand(g *globalConfig) *cobra.Command {
 		if len(args) > 0 {
 			opts.inputFileName = filepath.Base(args[0])
 
-			f, err := os.Open(args[0])
+			f, err := os.Open(g.path(args[0]))
 			if err != nil {
 				return err
 			}
 			defer f.Close()
 			opts.input = f
-		} else if term.IsTerminal(int(os.Stdin.Fd())) {
+		} else if g.isStdinTerminal {
 			log.Infof(ctx, "Reading from stdin...")
 		}
 
@@ -109,7 +108,6 @@ type taskImportOptions struct {
 }
 
 func runTaskImportPlain(ctx context.Context, g *globalConfig, opts *taskImportOptions) (err error) {
-	now := getNow()
 	s := bufio.NewScanner(opts.input)
 
 	if opts.dryRun {
@@ -120,9 +118,9 @@ func runTaskImportPlain(ctx context.Context, g *globalConfig, opts *taskImportOp
 			}
 		}
 		if n == 1 {
-			fmt.Printf("Creating %d tasks\n", n)
+			fmt.Fprintf(g.stdout, "Creating %d tasks\n", n)
 		} else if n > 1 {
-			fmt.Printf("Creating %d tasks\n", n)
+			fmt.Fprintf(g.stdout, "Creating %d tasks\n", n)
 		}
 		return s.Err()
 	}
@@ -147,9 +145,9 @@ func runTaskImportPlain(ctx context.Context, g *globalConfig, opts *taskImportOp
 			continue
 		}
 
-		t.ID = newUUIDV7(now, prevID)
+		t.ID = newUUIDV7(g.runStart, prevID)
 		prevID = t.ID
-		if err := insertTask(db, now, t); err != nil {
+		if err := insertTask(db, g.runStart, t); err != nil {
 			resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 		}
 	}
@@ -159,7 +157,6 @@ func runTaskImportPlain(ctx context.Context, g *globalConfig, opts *taskImportOp
 }
 
 func runTaskImportCSV(ctx context.Context, g *globalConfig, opts *taskImportOptions) (err error) {
-	now := getNow()
 	r := csv.NewReader(opts.input)
 	r.ReuseRecord = true
 
@@ -223,7 +220,7 @@ func runTaskImportCSV(ctx context.Context, g *globalConfig, opts *taskImportOpti
 			}
 		}
 		if newTask {
-			t.ID = newUUIDV7(now, prevID)
+			t.ID = newUUIDV7(g.runStart, prevID)
 			prevID = t.ID
 		}
 
@@ -242,13 +239,13 @@ func runTaskImportCSV(ctx context.Context, g *globalConfig, opts *taskImportOpti
 		if opts.dryRun {
 			line, _ := r.FieldPos(0)
 			if newTask {
-				fmt.Printf("%s:%d: new task %s\n", opts.inputFileName, line, plainTaskDescription(t.Description, true))
+				fmt.Fprintf(g.stdout, "%s:%d: new task %s\n", opts.inputFileName, line, plainTaskDescription(t.Description, true))
 			} else {
 				switch err := verifyTaskExists(db, t.ID); {
 				case err == nil:
-					fmt.Printf("%s:%d: update task %v with description %s\n", opts.inputFileName, line, t.ID, plainTaskDescription(t.Description, true))
+					fmt.Fprintf(g.stdout, "%s:%d: update task %v with description %s\n", opts.inputFileName, line, t.ID, plainTaskDescription(t.Description, true))
 				case isTaskNotFound(err):
-					fmt.Printf("%s:%d: new task %s\n", opts.inputFileName, line, plainTaskDescription(t.Description, true))
+					fmt.Fprintf(g.stdout, "%s:%d: new task %s\n", opts.inputFileName, line, plainTaskDescription(t.Description, true))
 				default:
 					resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
 				}
@@ -256,7 +253,7 @@ func runTaskImportCSV(ctx context.Context, g *globalConfig, opts *taskImportOpti
 			continue
 		}
 
-		if err := insertTask(db, now, t); err != nil {
+		if err := insertTask(db, g.runStart, t); err != nil {
 			if newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey {
 				line, _ := r.FieldPos(0)
 				resultError = errors.Join(resultError, fmt.Errorf("%s:%d: %v", opts.inputFileName, line, err))
@@ -281,7 +278,6 @@ func runTaskImportCSV(ctx context.Context, g *globalConfig, opts *taskImportOpti
 }
 
 func runTaskImportJSON(ctx context.Context, g *globalConfig, opts *taskImportOptions) (err error) {
-	now := getNow()
 	d := jsontext.NewDecoder(opts.input)
 
 	db, err := g.open(ctx)
@@ -309,7 +305,7 @@ func runTaskImportJSON(ctx context.Context, g *globalConfig, opts *taskImportOpt
 
 		newTask := t.ID == uuid.Nil
 		if newTask {
-			t.ID = newUUIDV7(now, prevID)
+			t.ID = newUUIDV7(g.runStart, prevID)
 			prevID = t.ID
 		}
 
@@ -324,13 +320,13 @@ func runTaskImportJSON(ctx context.Context, g *globalConfig, opts *taskImportOpt
 		if opts.dryRun {
 			// TODO(someday): Add line number.
 			if newTask {
-				fmt.Printf("%s: new task %s\n", opts.inputFileName, plainTaskDescription(t.Description, true))
+				fmt.Fprintf(g.stdout, "%s: new task %s\n", opts.inputFileName, plainTaskDescription(t.Description, true))
 			} else {
 				switch err := verifyTaskExists(db, t.ID); {
 				case err == nil:
-					fmt.Printf("%s: update task %v with description %s\n", opts.inputFileName, t.ID, plainTaskDescription(t.Description, true))
+					fmt.Fprintf(g.stdout, "%s: update task %v with description %s\n", opts.inputFileName, t.ID, plainTaskDescription(t.Description, true))
 				case isTaskNotFound(err):
-					fmt.Printf("%s: new task %s\n", opts.inputFileName, plainTaskDescription(t.Description, true))
+					fmt.Fprintf(g.stdout, "%s: new task %s\n", opts.inputFileName, plainTaskDescription(t.Description, true))
 				default:
 					resultError = errors.Join(resultError, fmt.Errorf("%s: %v", opts.inputFileName, err))
 				}
@@ -338,7 +334,7 @@ func runTaskImportJSON(ctx context.Context, g *globalConfig, opts *taskImportOpt
 			continue
 		}
 
-		if err := insertTask(db, now, t); err != nil {
+		if err := insertTask(db, g.runStart, t); err != nil {
 			if newTask || sqlite.ErrCode(err) != sqlite.ResultConstraintPrimaryKey {
 				// TODO(someday): Add line number.
 				resultError = errors.Join(resultError, fmt.Errorf("%s: %v", opts.inputFileName, err))

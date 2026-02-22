@@ -25,7 +25,6 @@ import (
 	"errors"
 	"fmt"
 	"iter"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -94,14 +93,14 @@ func runTaskList(ctx context.Context, g *globalConfig, format outputFormat) erro
 
 	var w *csv.Writer
 	if format == csvOutputFormat {
-		w = csv.NewWriter(os.Stdout)
+		w = csv.NewWriter(g.stdout)
 		w.Write([]string{"ID", "Description", "Labels"})
 	}
 	var writeError error
 	err = listTasks(db, func(t *task) bool {
 		switch format {
 		case plainOutputFormat:
-			_, writeError = fmt.Println(plainTaskDescription(t.Description, false))
+			_, writeError = fmt.Fprintln(g.stdout, plainTaskDescription(t.Description, false))
 		case csvOutputFormat:
 			row := []string{
 				t.ID.String(),
@@ -116,7 +115,7 @@ func runTaskList(ctx context.Context, g *globalConfig, format outputFormat) erro
 				return false
 			}
 			line = append(line, '\n')
-			_, writeError = os.Stdout.Write(line)
+			_, writeError = g.stdout.Write(line)
 		default:
 			writeError = fmt.Errorf("unhandled format %s", format)
 		}
@@ -160,8 +159,6 @@ func newTaskNewCommand(g *globalConfig) *cobra.Command {
 }
 
 func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err error) {
-	now := getNow()
-
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -173,14 +170,14 @@ func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err
 	}
 	defer endFn(&err)
 
-	t := opts.toTask(newUUIDV7(now, uuid.Nil))
-	if err := insertTask(db, now, t); err != nil {
+	t := opts.toTask(newUUIDV7(g.runStart, uuid.Nil))
+	if err := insertTask(db, g.runStart, t); err != nil {
 		return err
 	}
 	outputLine := make([]byte, 0, uuidStringLength+1)
 	outputLine = appendUUIDText(outputLine, t.ID)
 	outputLine = append(outputLine, '\n')
-	if _, err := os.Stdout.Write(outputLine); err != nil {
+	if _, err := g.stdout.Write(outputLine); err != nil {
 		return err
 	}
 
@@ -270,8 +267,6 @@ func newTaskShowCommand(g *globalConfig) *cobra.Command {
 }
 
 func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format outputFormat) (err error) {
-	now := getNow()
-
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -289,7 +284,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format 
 	}
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/list_by_task.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":       getNow().UTC().String(),
+			":now":       timeToSQLArg(g.runStart),
 			":task_uuid": taskID.String(),
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -331,7 +326,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format 
 			for _, e := range t.Entries {
 				endTime := e.EndTime()
 				if endTime.IsZero() {
-					endTime = now
+					endTime = g.runStart
 				}
 				total += max(endTime.Sub(e.StartTime), 0)
 			}
@@ -344,14 +339,14 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format 
 			buf.WriteString("| Date       | Start   | End     |\n")
 			buf.WriteString("| :--------- | ------: | ------: |\n")
 			for _, e := range t.Entries {
-				startTime := e.StartTime.Local()
-				startDate := localDateFromTime(startTime)
-				endTime := e.EndTime().Local()
+				startTime := e.StartTime.In(g.location)
+				startDate := dateFromTime(startTime)
+				endTime := e.EndTime().In(g.location)
 				var endTimeString string
 				switch {
 				case endTime.IsZero():
 					endTimeString = "present"
-				case !localDateFromTime(endTime).Equal(startDate):
+				case !dateFromTime(endTime).Equal(startDate):
 					endTimeString = endTime.Format("2006-01-02T15:04")
 				default:
 					endTimeString = endTime.Format(time.Kitchen)
@@ -365,12 +360,12 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format 
 			}
 		}
 
-		if _, err := buf.WriteTo(os.Stdout); err != nil {
+		if _, err := buf.WriteTo(g.stdout); err != nil {
 			return err
 		}
 
 	case csvOutputFormat:
-		w := csv.NewWriter(os.Stdout)
+		w := csv.NewWriter(g.stdout)
 		w.Write(entryCSVHeaderRow())
 		for _, e := range t.Entries {
 			e.Task = t
@@ -395,7 +390,7 @@ func runTaskShow(ctx context.Context, g *globalConfig, taskID uuid.UUID, format 
 			return err
 		}
 		data = append(data, '\n')
-		if _, err := os.Stdout.Write(data); err != nil {
+		if _, err := g.stdout.Write(data); err != nil {
 			return err
 		}
 	}
@@ -536,6 +531,7 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query strin
 		deltatExecutable: g.executablePath,
 		databasePath:     g.dbPath,
 		fzfOptions: fzfOptions{
+			env:          &g.processEnvironment,
 			multi:        multi,
 			initialQuery: query,
 			select1:      query != "",
@@ -545,7 +541,7 @@ func runTaskSelect(ctx context.Context, g *globalConfig, multi bool, query strin
 		return err
 	}
 	for _, id := range ids {
-		fmt.Println(id)
+		fmt.Fprintln(g.stdout, id)
 	}
 
 	return nil
@@ -559,7 +555,7 @@ func runTaskSelectReload(ctx context.Context, g *globalConfig) error {
 	defer closeConn(ctx, db)
 
 	var queryError error
-	err = writeFZFItems(ctx, os.Stdout, func(yield func(string) bool) {
+	err = writeFZFItems(ctx, g.stdout, func(yield func(string) bool) {
 		queryError = listTasks(db, func(t *task) bool {
 			return yield(taskSelectItemString(t))
 		})

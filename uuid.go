@@ -21,7 +21,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"os"
 	"slices"
 	"time"
 
@@ -133,15 +132,14 @@ func newGenerateUUIDCommand(g *globalConfig) *cobra.Command {
 }
 
 func runGenerateUUID(ctx context.Context, g *globalConfig, prevID uuid.UUID, n int) error {
-	now := getNow()
 	buf := make([]byte, 0, (uuidStringLength+1)*n)
 	for range n {
-		id := newUUIDV7(now, prevID)
+		id := newUUIDV7(g.runStart, prevID)
 		buf = appendUUIDText(buf, id)
 		buf = append(buf, '\n')
 		prevID = id
 	}
-	_, err := os.Stdout.Write(buf)
+	_, err := g.stdout.Write(buf)
 	return err
 }
 

@@ -20,15 +20,18 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"iter"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"zombiezen.com/go/log"
 	"zombiezen.com/go/sqlite"
 	"zombiezen.com/go/sqlite/shell"
@@ -37,16 +40,63 @@ import (
 	"zombiezen.com/go/xcontext"
 )
 
-type globalConfig struct {
+// processEnvironment holds the dependencies from the OS environment used in this program.
+type processEnvironment struct {
+	// executablePath is the absolute path to the running program.
 	executablePath string
-	dbPath         string
+	// workDirectory can override the current work directory if non-empty.
+	workDirectory string
+	// environ is a list of environment variables in the form "KEY=VALUE".
+	environ []string
+	// location is the local timezone. Must not be nil.
+	location *time.Location
+	runStart time.Time
+
+	stdin           io.Reader
+	isStdinTerminal bool
+	stdout          io.Writer
+	stderr          io.Writer
+
+	initLogging func(showDebug bool)
+}
+
+// path returns the operating system path
+// for the path relative to env.workDirectory.
+func (env *processEnvironment) path(name string) string {
+	if env == nil || env.workDirectory == "" || filepath.IsAbs(name) {
+		return name
+	}
+	return filepath.Join(env.workDirectory, name)
+}
+
+func (env *processEnvironment) lookupEnv(key string) (string, bool) {
+	if env == nil || strings.Contains(key, "=") {
+		return "", false
+	}
+	for _, kv := range slices.Backward(env.environ) {
+		if len(kv) >= len(key)+1 && kv[:len(key)] == key && kv[len(key)] == '=' {
+			return kv[len(key)+1:], true
+		}
+	}
+	return "", false
+}
+
+func (env *processEnvironment) getenv(key string) string {
+	value, _ := env.lookupEnv(key)
+	return value
+}
+
+type globalConfig struct {
+	processEnvironment
+
+	dbPath string
 }
 
 func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
 	if g.dbPath == "" {
 		return nil, fmt.Errorf("must set DELTAT_DB or pass --db flag")
 	}
-	conn, err := sqlite.OpenConn(g.dbPath, sqlite.OpenReadWrite, sqlite.OpenCreate)
+	conn, err := sqlite.OpenConn(g.path(g.dbPath), sqlite.OpenReadWrite, sqlite.OpenCreate)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +118,38 @@ var rootCommandHelp string
 var versionString string
 
 func main() {
+	env := &processEnvironment{
+		runStart: time.Now(),
+		environ:  os.Environ(),
+		location: time.Local,
+
+		stdin:           os.Stdin,
+		isStdinTerminal: term.IsTerminal(int(os.Stdin.Fd())),
+		stdout:          os.Stdout,
+		stderr:          os.Stderr,
+
+		initLogging: initLogging,
+	}
+
+	var err error
+	env.executablePath, err = os.Executable()
+	if err != nil {
+		initLogging(false)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), sigterm...)
+	err = run(ctx, env, os.Args[1:])
+	cancel()
+	if err != nil {
+		initLogging(false)
+		log.Errorf(context.Background(), "%v", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, env *processEnvironment, args []string) error {
 	rootCommand := &cobra.Command{
 		Use:           "deltat",
 		Short:         "time tracker",
@@ -77,19 +159,14 @@ func main() {
 		Version:       versionString,
 	}
 
-	g := new(globalConfig)
-	var err error
-	g.executablePath, err = os.Executable()
-	if err != nil {
-		initLogging(false)
-		log.Errorf(context.Background(), "%v", err)
-		os.Exit(1)
-	}
+	g := &globalConfig{processEnvironment: *env}
 
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
-	rootCommand.PersistentFlags().StringVar(&g.dbPath, "db", os.Getenv("DELTAT_DB"), "`path` to database")
+	rootCommand.PersistentFlags().StringVar(&g.dbPath, "db", env.getenv("DELTAT_DB"), "`path` to database")
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
-		initLogging(*showDebug)
+		if g.initLogging != nil {
+			g.initLogging(*showDebug)
+		}
 		return nil
 	}
 
@@ -110,14 +187,8 @@ func main() {
 		newTimesheetCommand(g),
 	)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), sigterm...)
-	err = rootCommand.ExecuteContext(ctx)
-	cancel()
-	if err != nil {
-		initLogging(*showDebug)
-		log.Errorf(context.Background(), "%v", err)
-		os.Exit(1)
-	}
+	rootCommand.SetArgs(args)
+	return rootCommand.ExecuteContext(ctx)
 }
 
 func closeConn(ctx context.Context, conn *sqlite.Conn) {
@@ -180,11 +251,10 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	}
 	defer closeConn(ctx, db)
 
-	now := getNow()
 	hasAny := false
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":   timeToSQLArg(now),
+			":now":   timeToSQLArg(g.runStart),
 			":limit": nil,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -194,7 +264,13 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 			if err != nil {
 				return fmt.Errorf("start_time: %v", err)
 			}
-			fmt.Printf("%s running since %s (%s elapsed)\n", description, startTime.Local().Format(time.Stamp), formatDuration(now.Sub(startTime)))
+			fmt.Fprintf(
+				g.stdout,
+				"%s running since %s (%s elapsed)\n",
+				description,
+				startTime.In(g.location).Format(time.Stamp),
+				formatDuration(g.runStart.Sub(startTime)),
+			)
 			return nil
 		},
 	})
@@ -203,7 +279,7 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 	}
 
 	if !hasAny {
-		fmt.Println("Nothing running.")
+		fmt.Fprintln(g.stdout, "Nothing running.")
 	}
 	return nil
 }
@@ -330,13 +406,17 @@ var initLogOnce sync.Once
 
 func initLogging(showDebug bool) {
 	initLogOnce.Do(func() {
-		minLogLevel := log.Info
-		if showDebug {
-			minLogLevel = log.Debug
-		}
-		log.SetDefault(&log.LevelFilter{
-			Min:    minLogLevel,
-			Output: log.New(os.Stderr, "deltat: ", 0, nil),
-		})
+		log.SetDefault(newLogger(os.Stderr, showDebug))
 	})
+}
+
+func newLogger(out io.Writer, showDebug bool) log.Logger {
+	minLogLevel := log.Info
+	if showDebug {
+		minLogLevel = log.Debug
+	}
+	return &log.LevelFilter{
+		Min:    minLogLevel,
+		Output: log.New(out, "deltat: ", 0, nil),
+	}
 }

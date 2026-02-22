@@ -24,8 +24,8 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -99,8 +99,7 @@ func newTimesheetCommand(g *globalConfig) *cobra.Command {
 		} else {
 			switch len(args) {
 			case 0:
-				now := getNow()
-				today := gregorian.NewDate(now.Year(), now.Month(), now.Day())
+				today := dateFromTime(g.runStart.In(g.location))
 				opts.startDate, opts.endDate = today, today
 			case 1:
 				var err error
@@ -143,7 +142,6 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		description string
 		duration    time.Duration
 	}
-	now := getNow()
 
 	db, err := opts.open(ctx)
 	if err != nil {
@@ -151,19 +149,19 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 	}
 	defer closeConn(ctx, db)
 
-	minTime := time.Date(opts.startDate.Year(), opts.startDate.Month(), opts.startDate.Day(), 0, 0, 0, 0, time.Local)
-	maxTime := time.Date(opts.endDate.Year(), opts.endDate.Month(), opts.endDate.Day()+1, 0, 0, 0, 0, time.Local)
+	minTime := time.Date(opts.startDate.Year(), opts.startDate.Month(), opts.startDate.Day(), 0, 0, 0, 0, opts.location)
+	maxTime := time.Date(opts.endDate.Year(), opts.endDate.Month(), opts.endDate.Day()+1, 0, 0, 0, 0, opts.location)
 
 	var w *csv.Writer
 	if opts.format == csvOutputFormat {
-		w = csv.NewWriter(os.Stdout)
+		w = csv.NewWriter(opts.stdout)
 		w.Write(entryCSVHeaderRow())
 	}
 	totals := make(map[uuid.UUID]timesheetTotal)
 	totalsByLabel := make(map[string]time.Duration)
 	var lastDateHeader gregorian.Date
 	args := map[string]any{
-		":now": timeToSQLArg(now),
+		":now": timeToSQLArg(opts.runStart),
 	}
 	if opts.all {
 		args[":min_time"] = nil
@@ -199,7 +197,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 
 			switch opts.format {
 			case plainOutputFormat:
-				startDate := localDateFromTime(e.StartTime)
+				startDate := dateFromTime(e.StartTime.In(opts.location))
 
 				var headerFormat string
 				switch {
@@ -209,29 +207,32 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 					headerFormat = "\n# %v\n\n"
 				}
 				if headerFormat != "" {
-					fmt.Printf(headerFormat, startDate)
+					fmt.Fprintf(opts.stdout, headerFormat, startDate)
 					lastDateHeader = startDate
 				}
 
 				switch {
 				case e.isActive():
-					fmt.Printf(
+					fmt.Fprintf(
+						opts.stdout,
 						"- %7s – present: %s\n",
-						e.StartTime.Local().Format(time.Kitchen),
+						e.StartTime.In(opts.location).Format(time.Kitchen),
 						plainTaskDescription(e.Task.Description, false),
 					)
-				case !startDate.Equal(localDateFromTime(e.EndTime())):
-					fmt.Printf(
+				case !startDate.Equal(dateFromTime(e.EndTime().In(opts.location))):
+					fmt.Fprintf(
+						opts.stdout,
 						"- %7s – %s: %s\n",
-						e.StartTime.Local().Format(time.Kitchen),
-						e.EndTime().Local().Format("2006-01-02T15:04"),
+						e.StartTime.In(opts.location).Format(time.Kitchen),
+						e.EndTime().In(opts.location).Format("2006-01-02T15:04"),
 						plainTaskDescription(e.Task.Description, false),
 					)
 				default:
-					fmt.Printf(
+					fmt.Fprintf(
+						opts.stdout,
 						"- %7s – %7s: %s\n",
-						e.StartTime.Local().Format(time.Kitchen),
-						e.EndTime().Local().Format(time.Kitchen),
+						e.StartTime.In(opts.location).Format(time.Kitchen),
+						e.EndTime().In(opts.location).Format(time.Kitchen),
 						plainTaskDescription(e.Task.Description, false),
 					)
 				}
@@ -244,7 +245,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 				}
 				endTimeForDuration := e.EndTime()
 				if e.EndTime().IsZero() {
-					endTimeForDuration = now
+					endTimeForDuration = opts.runStart
 				} else if !opts.all && e.EndTime().After(maxTime) {
 					endTimeForDuration = maxTime
 				}
@@ -269,7 +270,7 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 					return fmt.Errorf("entry %v: %v", e.ID, err)
 				}
 				line = append(line, '\n')
-				if _, err := os.Stdout.Write(line); err != nil {
+				if _, err := opts.stdout.Write(line); err != nil {
 					return err
 				}
 			default:
@@ -304,19 +305,21 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 			return -cmp.Compare(a.duration, b.duration)
 		})
 
-		fmt.Print("\n# Totals\n\n")
+		fmt.Fprint(opts.stdout, "\n# Totals\n\n")
 		const (
 			taskColumnWidth = 56
 			timeColumnWidth = 7
 		)
-		fmt.Printf("| %-*s | %-*s |\n", taskColumnWidth, "Task", timeColumnWidth, "Time")
-		fmt.Printf(
+		fmt.Fprintf(opts.stdout, "| %-*s | %-*s |\n", taskColumnWidth, "Task", timeColumnWidth, "Time")
+		fmt.Fprintf(
+			opts.stdout,
 			"| :%s | %s: |\n",
 			strings.Repeat("-", taskColumnWidth-1),
 			strings.Repeat("-", timeColumnWidth-1),
 		)
 		for _, t := range totalList {
-			fmt.Printf(
+			fmt.Fprintf(
+				opts.stdout,
 				"| %-*s | %-*s |\n",
 				taskColumnWidth, plainTaskDescription(t.description, false),
 				timeColumnWidth, formatDuration(t.duration),
@@ -324,16 +327,18 @@ func runTimesheet(ctx context.Context, opts *timesheetOptions) error {
 		}
 
 		if len(totalByLabelList) > 0 {
-			fmt.Print("\nBy label:\n\n")
+			fmt.Fprint(opts.stdout, "\nBy label:\n\n")
 			const labelColumnWidth = 32
-			fmt.Printf("| %-*s | %-*s |\n", labelColumnWidth, "Label", timeColumnWidth, "Time")
-			fmt.Printf(
+			fmt.Fprintf(opts.stdout, "| %-*s | %-*s |\n", labelColumnWidth, "Label", timeColumnWidth, "Time")
+			fmt.Fprintf(
+				opts.stdout,
 				"| :%s | %s: |\n",
 				strings.Repeat("-", labelColumnWidth-1),
 				strings.Repeat("-", timeColumnWidth-1),
 			)
 			for _, t := range totalByLabelList {
-				fmt.Printf(
+				fmt.Fprintf(
+					opts.stdout,
 					"| %-*s | %-*s |\n",
 					labelColumnWidth, t.description,
 					timeColumnWidth, formatDuration(t.duration),
@@ -412,7 +417,7 @@ type startOptions struct {
 }
 
 func runStart(ctx context.Context, opts *startOptions) error {
-	startedAt := getNow()
+	startedAt := opts.runStart
 	entryStartTime := startedAt
 	if opts.startTimeOverride != "" {
 		var err error
@@ -440,6 +445,9 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		taskIDs, err := selectTask(ctx, db, &selectTaskOptions{
 			deltatExecutable: opts.executablePath,
 			databasePath:     opts.dbPath,
+			fzfOptions: fzfOptions{
+				env: &opts.processEnvironment,
+			},
 		})
 		if err != nil {
 			return err
@@ -449,7 +457,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		}
 		taskID = taskIDs[0]
 
-		startedAt = getNow()
+		startedAt = time.Now()
 		if opts.startTimeOverride == "" {
 			// Don't count the time interactively selecting the task.
 			entryStartTime = startedAt
@@ -559,21 +567,21 @@ func runStart(ctx context.Context, opts *startOptions) error {
 	outputLine := make([]byte, 0, uuidStringLength+1)
 	outputLine = appendUUIDText(outputLine, entryID)
 	outputLine = append(outputLine, '\n')
-	if _, err := os.Stdout.Write(outputLine); err != nil {
+	if _, err := opts.stdout.Write(outputLine); err != nil {
 		return err
 	}
 
 	initialMessage := new(bytes.Buffer)
 	initialMessage.WriteString(plainTaskDescription(taskDescription, true))
 	initialMessage.WriteString(" started at ")
-	initialMessage.WriteString(startedAt.Local().Format(time.Kitchen))
+	initialMessage.WriteString(startedAt.In(opts.location).Format(time.Kitchen))
 	if !scheduledEndTime.IsZero() {
 		initialMessage.WriteString("; will end at ")
-		initialMessage.WriteString(scheduledEndTime.Local().Format(time.Kitchen))
+		initialMessage.WriteString(scheduledEndTime.In(opts.location).Format(time.Kitchen))
 	}
 	if !breakEndTime.IsZero() {
 		initialMessage.WriteString(". Break ends at ")
-		initialMessage.WriteString(breakEndTime.Local().Format(time.Kitchen))
+		initialMessage.WriteString(breakEndTime.In(opts.location).Format(time.Kitchen))
 	}
 	initialMessage.WriteString(".")
 	log.Infof(ctx, "%s", initialMessage.Bytes())
@@ -588,7 +596,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		case now := <-ticker.C:
 			newStartTime, newEndTime, newScheduledEndTime, err := pollEnd(db, entryID, now, scheduledEndTime)
 			if err != nil {
-				os.Stderr.WriteString("\n")
+				io.WriteString(opts.stderr, "\n")
 				log.Warnf(ctx, "Read entry: %v", err)
 			}
 			if !newStartTime.IsZero() {
@@ -596,25 +604,25 @@ func runStart(ctx context.Context, opts *startOptions) error {
 			}
 			if !newEndTime.IsZero() {
 				// Another process ended or removed the entry.
-				os.Stderr.WriteString("\n")
-				log.Infof(ctx, "Ended at %s", newEndTime.Local().Format(time.Kitchen))
+				io.WriteString(opts.stderr, "\n")
+				log.Infof(ctx, "Ended at %s", newEndTime.In(opts.location).Format(time.Kitchen))
 				return nil
 			}
 			scheduledEndTime = newScheduledEndTime
 
 			if scheduledEndTime.IsZero() {
-				fmt.Fprintf(os.Stderr, "\r%s elapsed", formatDuration(now.Sub(startedAt)))
+				fmt.Fprintf(opts.stderr, "\r%s elapsed", formatDuration(now.Sub(startedAt)))
 			} else {
 				// Round everything so that the formatted durations add up to the user-specified duration.
 				// Satisfies my constant need to add both numbers and have it be a whole number. 😅
-				fmt.Fprintf(os.Stderr,
+				fmt.Fprintf(opts.stderr,
 					"\r%s elapsed (%s remaining)",
 					formatDuration(now.Sub(startedAt.Round(time.Second)).Round(time.Second)),
 					formatDuration(scheduledEndTime.Round(time.Second).Sub(now).Round(time.Second)),
 				)
 			}
 		case <-ctx.Done():
-			now := getNow()
+			now := time.Now()
 
 			ctx, cancel := xcontext.KeepAlive(ctx, 10*time.Second)
 			defer cancel()
@@ -638,7 +646,7 @@ func runStart(ctx context.Context, opts *startOptions) error {
 				return err
 			}
 
-			os.Stderr.WriteString("\n")
+			io.WriteString(opts.stderr, "\n")
 			log.Infof(ctx, "Ended at %s", now.Format(time.Kitchen))
 			return nil
 		}
@@ -723,12 +731,11 @@ type newEntryOptions struct {
 }
 
 func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
-	now := getNow()
-	startTime, err := parseTime(now, opts.startTime, false)
+	startTime, err := parseTime(opts.runStart, opts.startTime, false)
 	if err != nil {
 		return fmt.Errorf("start time: %v", err)
 	}
-	endTime, err := parseTime(now, opts.endTime, false)
+	endTime, err := parseTime(opts.runStart, opts.endTime, false)
 	if err != nil {
 		return fmt.Errorf("end time: %v", err)
 	}
@@ -750,14 +757,14 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	var prevID uuid.UUID
 	taskID := opts.taskID
 	if taskID == uuid.Nil {
-		taskID = newUUIDV7(now, uuid.Nil)
+		taskID = newUUIDV7(opts.runStart, uuid.Nil)
 		prevID = taskID
-		if err := insertTask(db, now, opts.newTaskOptions.toTask(taskID)); err != nil {
+		if err := insertTask(db, opts.runStart, opts.newTaskOptions.toTask(taskID)); err != nil {
 			return err
 		}
 	}
 	e := &entry{
-		ID:         newUUIDV7(now, prevID),
+		ID:         newUUIDV7(opts.runStart, prevID),
 		StartTime:  startTime,
 		RawEndTime: &endTime,
 		Task:       &task{ID: taskID},
@@ -768,7 +775,7 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	outputLine := make([]byte, 0, uuidStringLength+1)
 	outputLine = appendUUIDText(outputLine, e.ID)
 	outputLine = append(outputLine, '\n')
-	if _, err := os.Stdout.Write(outputLine); err != nil {
+	if _, err := opts.stdout.Write(outputLine); err != nil {
 		return err
 	}
 
@@ -824,13 +831,11 @@ type editEntryOptions struct {
 }
 
 func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) error {
-	now := getNow()
-
-	startTime, err := parseTimeOrEmpty(now, opts.startTime, false)
+	startTime, err := parseTimeOrEmpty(g.runStart, opts.startTime, false)
 	if err != nil {
 		return fmt.Errorf("start time: %v", err)
 	}
-	endTime, err := parseTimeOrEmpty(now, opts.endTime, false)
+	endTime, err := parseTimeOrEmpty(g.runStart, opts.endTime, false)
 	if err != nil {
 		return fmt.Errorf("end time: %v", err)
 	}
@@ -846,7 +851,7 @@ func runEntryEdit(ctx context.Context, g *globalConfig, opts *editEntryOptions) 
 	}
 	defer endFn(&err)
 
-	if _, err := fetchEntry(db, opts.entryID, now); err != nil {
+	if _, err := fetchEntry(db, opts.entryID, g.runStart); err != nil {
 		return err
 	}
 
@@ -962,15 +967,14 @@ func newEntrySelectCommand(g *globalConfig) *cobra.Command {
 }
 
 func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query string) error {
-	now := getNow()
-
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
 	}
 	defer closeConn(ctx, db)
 
-	ids, err := selectEntry(ctx, db, now, &fzfOptions{
+	ids, err := selectEntry(ctx, db, g.runStart.In(g.location), &fzfOptions{
+		env:          &g.processEnvironment,
 		multi:        multi,
 		initialQuery: query,
 		select1:      query != "",
@@ -979,13 +983,15 @@ func runEntrySelect(ctx context.Context, g *globalConfig, multi bool, query stri
 		return err
 	}
 	for _, id := range ids {
-		fmt.Println(id)
+		fmt.Fprintln(g.stdout, id)
 	}
 
 	return nil
 }
 
 func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfOptions) (uuid.UUIDs, error) {
+	location := now.Location()
+
 	opts = opts.clone()
 	opts.template = "2.."
 	opts.outputTemplate = "1"
@@ -1024,22 +1030,22 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 				}
 
 				var s string
-				startDate := localDateFromTime(e.StartTime)
+				startDate := dateFromTime(e.StartTime.In(location))
 				switch {
 				case e.isActive():
 					s = fmt.Sprintf(
 						"%v\n%s\n%s – present\n",
 						e.ID,
 						plainTaskDescription(e.Task.Description, false),
-						e.StartTime.Local().Format("2006-01-02T15:04"),
+						e.StartTime.In(location).Format("2006-01-02T15:04"),
 					)
-				case !startDate.Equal(localDateFromTime(e.EndTime())):
+				case !startDate.Equal(dateFromTime(e.EndTime().In(location))):
 					s = fmt.Sprintf(
 						"%v\n%s\n%s – %s",
 						e.ID,
 						plainTaskDescription(e.Task.Description, false),
-						e.StartTime.Local().Format("2006-01-02T15:04"),
-						e.EndTime().Local().Format("2006-01-02T15:04"),
+						e.StartTime.In(location).Format("2006-01-02T15:04"),
+						e.EndTime().In(location).Format("2006-01-02T15:04"),
 					)
 				default:
 					s = fmt.Sprintf(
@@ -1047,8 +1053,8 @@ func selectEntry(ctx context.Context, db *sqlite.Conn, now time.Time, opts *fzfO
 						e.ID,
 						plainTaskDescription(e.Task.Description, false),
 						startDate,
-						e.StartTime.Local().Format(time.Kitchen),
-						e.EndTime().Local().Format(time.Kitchen),
+						e.StartTime.In(location).Format(time.Kitchen),
+						e.EndTime().In(location).Format(time.Kitchen),
 					)
 				}
 				if !yield(s) {
@@ -1133,8 +1139,6 @@ func newStopCommand(g *globalConfig) *cobra.Command {
 }
 
 func runStop(ctx context.Context, g *globalConfig) (err error) {
-	now := getNow()
-
 	db, err := g.open(ctx)
 	if err != nil {
 		return err
@@ -1146,14 +1150,14 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	}
 	defer endFn(&err)
 
-	if err := endScheduledEntries(db, now); err != nil {
+	if err := endScheduledEntries(db, g.runStart); err != nil {
 		return err
 	}
 
 	var tasksToStop []string
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "tasks/list_active.sql", &sqlitex.ExecOptions{
 		Named: map[string]any{
-			":now":   timeToSQLArg(now),
+			":now":   timeToSQLArg(g.runStart),
 			":limit": nil,
 		},
 		ResultFunc: func(stmt *sqlite.Stmt) error {
@@ -1165,17 +1169,17 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 		return err
 	}
 	if len(tasksToStop) == 0 {
-		fmt.Println("No running tasks.")
+		fmt.Fprintln(g.stdout, "No running tasks.")
 		return nil
 	}
 
 	err = sqlitex.ExecuteTransientFS(db, sqlFiles(), "entries/stop_all.sql", &sqlitex.ExecOptions{
-		Named: map[string]any{":now": timeToSQLArg(now)},
+		Named: map[string]any{":now": timeToSQLArg(g.runStart)},
 	})
 	if err != nil {
 		return err
 	}
-	fmt.Println("Stopped", strings.Join(tasksToStop, ", "))
+	fmt.Fprintln(g.stdout, "Stopped", strings.Join(tasksToStop, ", "))
 
 	return nil
 }

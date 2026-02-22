@@ -113,7 +113,7 @@ func runPomodoroSettingsShow(ctx context.Context, g *globalConfig) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%d minutes followed by %d-minute break\n", cfg.duration/time.Minute, cfg.breakDuration/time.Minute)
+	fmt.Fprintf(g.stdout, "%d minutes followed by %d-minute break\n", cfg.duration/time.Minute, cfg.breakDuration/time.Minute)
 	return nil
 }
 
