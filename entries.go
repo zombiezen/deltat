@@ -564,11 +564,13 @@ func runStart(ctx context.Context, opts *startOptions) error {
 		return err
 	}
 
-	outputLine := make([]byte, 0, uuidStringLength+1)
-	outputLine = appendUUIDText(outputLine, entryID)
-	outputLine = append(outputLine, '\n')
-	if _, err := opts.stdout.Write(outputLine); err != nil {
-		return err
+	if !opts.quiet {
+		outputLine := make([]byte, 0, uuidStringLength+1)
+		outputLine = appendUUIDText(outputLine, entryID)
+		outputLine = append(outputLine, '\n')
+		if _, err := opts.stdout.Write(outputLine); err != nil {
+			return err
+		}
 	}
 
 	initialMessage := new(bytes.Buffer)
@@ -772,11 +774,13 @@ func runEntryNew(ctx context.Context, opts *newEntryOptions) error {
 	if err := insertEntry(db, e); err != nil {
 		return err
 	}
-	outputLine := make([]byte, 0, uuidStringLength+1)
-	outputLine = appendUUIDText(outputLine, e.ID)
-	outputLine = append(outputLine, '\n')
-	if _, err := opts.stdout.Write(outputLine); err != nil {
-		return err
+	if !opts.quiet {
+		outputLine := make([]byte, 0, uuidStringLength+1)
+		outputLine = appendUUIDText(outputLine, e.ID)
+		outputLine = append(outputLine, '\n')
+		if _, err := opts.stdout.Write(outputLine); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -1169,7 +1173,9 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 		return err
 	}
 	if len(tasksToStop) == 0 {
-		fmt.Fprintln(g.stdout, "No running tasks.")
+		if !g.quiet {
+			fmt.Fprintln(g.stdout, "No running tasks.")
+		}
 		return nil
 	}
 
@@ -1179,7 +1185,9 @@ func runStop(ctx context.Context, g *globalConfig) (err error) {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(g.stdout, "Stopped", strings.Join(tasksToStop, ", "))
+	if !g.quiet {
+		fmt.Fprintln(g.stdout, "Stopped", strings.Join(tasksToStop, ", "))
+	}
 
 	return nil
 }

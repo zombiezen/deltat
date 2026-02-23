@@ -174,11 +174,13 @@ func runTaskNew(ctx context.Context, g *globalConfig, opts *newTaskOptions) (err
 	if err := insertTask(db, g.runStart, t); err != nil {
 		return err
 	}
-	outputLine := make([]byte, 0, uuidStringLength+1)
-	outputLine = appendUUIDText(outputLine, t.ID)
-	outputLine = append(outputLine, '\n')
-	if _, err := g.stdout.Write(outputLine); err != nil {
-		return err
+	if !g.quiet {
+		outputLine := make([]byte, 0, uuidStringLength+1)
+		outputLine = appendUUIDText(outputLine, t.ID)
+		outputLine = append(outputLine, '\n')
+		if _, err := g.stdout.Write(outputLine); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -594,7 +596,7 @@ func selectTask(ctx context.Context, db *sqlite.Conn, opts *selectTaskOptions) (
 	reloadCommand := exeForShell + " task select --db=" + dbPathForShell + " --reload"
 	bind.WriteString("ctrl-r:")
 	writeFZFActionWithArgument(bind, "reload", reloadCommand)
-	newTaskCommand := exeForShell + " task new --db=" + dbPathForShell + " -- {q}"
+	newTaskCommand := exeForShell + " task new --quiet --db=" + dbPathForShell + " -- {q}"
 	bind.WriteString(",ctrl-n:")
 	writeFZFActionWithArgument(bind, "execute", newTaskCommand)
 	bind.WriteString("+")

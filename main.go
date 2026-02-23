@@ -90,6 +90,7 @@ type globalConfig struct {
 	processEnvironment
 
 	dbPath string
+	quiet  bool
 }
 
 func (g *globalConfig) open(ctx context.Context) (*sqlite.Conn, error) {
@@ -162,6 +163,7 @@ func run(ctx context.Context, env *processEnvironment, args []string) error {
 	g := &globalConfig{processEnvironment: *env}
 
 	showDebug := rootCommand.PersistentFlags().Bool("debug", false, "show debugging output")
+	rootCommand.PersistentFlags().BoolVar(&g.quiet, "quiet", false, "display less output")
 	rootCommand.PersistentFlags().StringVar(&g.dbPath, "db", env.getenv("DELTAT_DB"), "`path` to database")
 	rootCommand.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		if g.initLogging != nil {
@@ -278,7 +280,7 @@ func runStatus(ctx context.Context, g *globalConfig) error {
 		return err
 	}
 
-	if !hasAny {
+	if !hasAny && !g.quiet {
 		fmt.Fprintln(g.stdout, "Nothing running.")
 	}
 	return nil
